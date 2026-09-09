@@ -345,6 +345,23 @@
     return /processing|spinner|loading|please wait|connecting|render-|-processing/.test(html.toLowerCase() + t.toLowerCase().slice(0, 600));
   }
 
+  function findOpenCardForm() {
+    const els = walkAll(document).filter((b) =>
+      b.matches && b.matches("button, [role='button'], input[type='submit'], input[type='button'], a[href]")
+    );
+    for (const b of els) {
+      const rect = b.getBoundingClientRect();
+      if (!rect.width && !rect.height) continue;
+      const t = ((b.innerText || b.value || b.getAttribute("aria-label") || "") + " " +
+        (b.getAttribute("data-testid") || "") + " " + (b.id || "") + " " +
+        (typeof b.className === "string" ? b.className : "")).toLowerCase();
+      if (/(pay|submit|continue|confirm|get link|use card|enter card|card details|add card)/.test(t)) {
+        return b;
+      }
+    }
+    return null;
+  }
+
   async function tryPayHard() {
     const res = await execPay();
     if (res.submitting) return true;
@@ -648,13 +665,22 @@
       window.__nonoLog && window.__nonoLog("Try #" + tries + " -> " + card.number);
 
       let st = { any: false };
-      for (let round = 0; round < 3 && !stopRequested; round++) {
+      for (let round = 0; round < 4 && !stopRequested; round++) {
         ensureCardMethod();
         await sleep(450);
         st = await fillRound(card);
         if (st.any) break;
-        window.__nonoLog && window.__nonoLog("No fields yet, round " + (round + 1) + "/3...");
-        await sleep(2000);
+        const snippet = (document.body ? (document.body.innerText + "").slice(0, 180) : "");
+        window.__nonoLog && window.__nonoLog("No fields round " + (round + 1) + "/4. Page: " +
+          snippet.replace(/\s+/g, " ").trim().slice(0, 120));
+        if (round === 0) {
+          const opener = findOpenCardForm();
+          if (opener) {
+            window.__nonoLog && window.__nonoLog("Opening card form popup...");
+            fireClick(opener);
+          }
+        }
+        await sleep(2500);
       }
 
       let submitted = false;
