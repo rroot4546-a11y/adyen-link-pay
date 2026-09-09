@@ -39,6 +39,29 @@
     el.dispatchEvent(new Event("blur", { bubbles: true }));
   }
 
+  function typeValue(el, value) {
+    const proto = el instanceof HTMLTextAreaElement
+      ? HTMLTextAreaElement.prototype
+      : HTMLInputElement.prototype;
+    const desc = Object.getOwnPropertyDescriptor(proto, "value");
+    if (!desc) return;
+    desc.set.call(el, "");
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+    const str = String(value);
+    for (let i = 0; i < str.length; i++) {
+      const ch = str[i];
+      desc.set.call(el, el.value + ch);
+      try {
+        el.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: ch }));
+        el.dispatchEvent(new KeyboardEvent("keypress", { bubbles: true, cancelable: true, key: ch }));
+        el.dispatchEvent(new KeyboardEvent("keyup", { bubbles: true, cancelable: true, key: ch }));
+      } catch (e) {}
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+    }
+    el.dispatchEvent(new Event("change", { bubbles: true }));
+    el.dispatchEvent(new Event("blur", { bubbles: true }));
+  }
+
   function classifyField(el) {
     const s = ((el.id || "") + " " + (el.name || "") + " " +
       (el.getAttribute("aria-label") || "") + " " +
@@ -62,35 +85,35 @@
       const kind = classifyField(inp);
       if (!kind) continue;
       if (kind === "number" && !fields.number) {
-        setNativeValue(inp, card.number || "");
+        typeValue(inp, card.number || "");
         fields.number = true; any = true;
       } else if (kind === "month" && !fields.month) {
-        setNativeValue(inp, String(card.month || card.expiryMonth || "12").padStart(2, "0"));
+        typeValue(inp, String(card.month || card.expiryMonth || "12").padStart(2, "0"));
         fields.month = true; any = true;
       } else if (kind === "year" && !fields.year) {
-        setNativeValue(inp, String(card.year || card.expiryYear || "2029").slice(-2));
+        typeValue(inp, String(card.year || card.expiryYear || "2029").slice(-2));
         fields.year = true; any = true;
       } else if (kind === "cvc" && !fields.cvc) {
-        setNativeValue(inp, card.cvc || "");
+        typeValue(inp, card.cvc || "");
         fields.cvc = true; any = true;
       }
     }
 
     if (!fields.number) {
       const n = document.querySelector('input[autocomplete="cc-number"], input[name*="cardNumber"], input[id*="cardNumber"]');
-      if (n) { setNativeValue(n, card.number || ""); fields.number = true; any = true; }
+      if (n) { typeValue(n, card.number || ""); fields.number = true; any = true; }
     }
     if (!fields.month && !fields.year) {
       const e = document.querySelector('input[autocomplete="cc-exp"], input[name*="expiry"], input[id*="expiry"]');
       if (e) {
-        setNativeValue(e, String(card.month || card.expiryMonth || "12").padStart(2, "0") + "/" +
+        typeValue(e, String(card.month || card.expiryMonth || "12").padStart(2, "0") + "/" +
           String(card.year || card.expiryYear || "2029").slice(-2));
         fields.month = true; fields.year = true; any = true;
       }
     }
     if (!fields.cvc) {
       const c = document.querySelector('input[autocomplete="cc-csc"], input[name*="securityCode"], input[name*="cvc"]');
-      if (c) { setNativeValue(c, card.cvc || ""); fields.cvc = true; any = true; }
+      if (c) { typeValue(c, card.cvc || ""); fields.cvc = true; any = true; }
     }
 
     const holder = document.querySelector('input[name*="holder"], input[id*="holder"], input[autocomplete="cc-name"]');
@@ -246,40 +269,54 @@
   }
 
   function findPayButton() {
-    const buttons = Array.from(document.querySelectorAll("button, [role='button'], a"));
+    const buttons = Array.from(document.querySelectorAll(
+      "button, [role='button'], a, input[type='submit'], input[type='button']"
+    ));
+    let adyenBtn = null;
     for (const b of buttons) {
       const rect = b.getBoundingClientRect();
       if (rect.width === 0 && rect.height === 0) continue;
       const text = ((b.innerText || "") + " " + (b.getAttribute("aria-label") || "")).trim().toLowerCase();
-      if (/^(pay|pay now|pay \$?\d|proceed to pay|confirm|submit|place order)/i.test(text) ||
-        (/adyen-checkout__button/.test(b.className || "") && /pay|continue/i.test(text))) {
+      if (/adyen-checkout__button/.test(b.className || "")) {
+        adyenBtn = adyenBtn || b;
+      }
+      if (/^(pay|pay now|pay \$?\d|proceed to pay|confirm|submit|place order)/i.test(text)) {
         return b;
       }
+      if (/pay/i.test(text) && text.length < 40 && b.offsetParent) {
+        adyenBtn = adyenBtn || b;
+      }
     }
-    return null;
+    if (adyenBtn && !adyenBtn.disabled) return adyenBtn;
+    return adyenBtn;
   }
 
-  function submitClick(triesLeft) {
-    triesLeft = triesLeft == null ? 8 : triesLeft;
+  function isProcessing() {
+    const html = topDocHtml();
+    if (/adyen-checkout__spinner|adyen-checkout__status--processing|adyen-checkout__status__icon--processing/i.test(html)) return true;
     const btn = findPayButton();
-    if (btn) {
-      const rect = btn.getBoundingClientRect();
-      btn.scrollIntoView({ block: "center" });
-      const x = rect.left + rect.width / 2;
-      const y = rect.top + rect.height / 2;
-      const opts = { bubbles: true, cancelable: true, view: window };
-      btn.dispatchEvent(new MouseEvent("mousedown", opts));
-      btn.dispatchEvent(new MouseEvent("mouseup", opts));
-      btn.dispatchEvent(new MouseEvent("click", opts));
-      for (const ev of ["pointerdown", "pointerup"]) {
+    if (!btn) return false;
+    const t = ((btn.innerText || "") + " " + (btn.getAttribute("aria-label") || "")).toLowerCase();
+    return btn.disabled || /processing|please wait|waiting/i.test(t);
+  }
+
+  async function submitClick(retries) {
+    retries = retries == null ? 8 : retries;
+    for (let i = 0; i < retries; i++) {
+      const btn = findPayButton();
+      if (btn) {
         try {
-          btn.dispatchEvent(new PointerEvent(ev, { bubbles: true, cancelable: true, pointerId: 1, pointerType: "touch" }));
+          btn.scrollIntoView({ block: "center" });
         } catch (e) {}
+        btn.click();
       }
-      return true;
-    }
-    if (triesLeft > 0) {
-      return new Promise((r) => setTimeout(() => r(submitClick(triesLeft - 1)), 1000));
+      await sleep(1300);
+      if (isProcessing()) return true;
+      const liBtn = findPayButton();
+      if (liBtn && liBtn.disabled === false && i < 2) {
+        await sleep(800);
+        continue;
+      }
     }
     return false;
   }
@@ -619,8 +656,13 @@
 
       let submitted = false;
       if (cfg.autoSubmit && st.any) {
-        submitted = !!submitClick();
-        if (!submitted) window.__nonoLog && window.__nonoLog("Submitting retry...");
+        submitted = await submitClick();
+        if (!submitted) {
+          window.__nonoLog && window.__nonoLog("Pay click failed, re-filling fields...");
+          st = await fillRound(card);
+          await sleep(900);
+          submitted = await submitClick();
+        }
       }
 
       const dtTick = Date.now() + Math.floor(Math.random() * 1000);

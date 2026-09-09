@@ -152,6 +152,29 @@ function injectFill(card) {
     el.dispatchEvent(new Event('blur', { bubbles: true }));
   }
 
+  function typeValue(el, value) {
+    const proto = el instanceof HTMLTextAreaElement
+      ? HTMLTextAreaElement.prototype
+      : HTMLInputElement.prototype;
+    const desc = Object.getOwnPropertyDescriptor(proto, 'value');
+    if (!desc) return;
+    desc.set.call(el, '');
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+    const str = String(value);
+    for (let i = 0; i < str.length; i++) {
+      const ch = str[i];
+      desc.set.call(el, el.value + ch);
+      try {
+        el.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: ch }));
+        el.dispatchEvent(new KeyboardEvent('keypress', { bubbles: true, cancelable: true, key: ch }));
+        el.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true, cancelable: true, key: ch }));
+      } catch (e) {}
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+    }
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+    el.dispatchEvent(new Event('blur', { bubbles: true }));
+  }
+
   function classify(el) {
     const s = ((el.id || '') + ' ' + (el.name || '') + ' ' +
       (el.getAttribute('aria-label') || '') + ' ' +
@@ -174,16 +197,16 @@ function injectFill(card) {
     const kind = classify(inp);
     if (!kind) continue;
     if (kind === 'number' && !fields.number) {
-      setNativeValue(inp, card.number || '');
+      typeValue(inp, card.number || '');
       fields.number = true; any = true;
     } else if (kind === 'month' && !fields.month) {
-      setNativeValue(inp, String(card.month || card.expiryMonth || '12').padStart(2, '0'));
+      typeValue(inp, String(card.month || card.expiryMonth || '12').padStart(2, '0'));
       fields.month = true; any = true;
     } else if (kind === 'year' && !fields.year) {
-      setNativeValue(inp, String(card.year || card.expiryYear || '2029').slice(-2));
+      typeValue(inp, String(card.year || card.expiryYear || '2029').slice(-2));
       fields.year = true; any = true;
     } else if (kind === 'cvc' && !fields.cvc) {
-      setNativeValue(inp, card.cvc || '');
+      typeValue(inp, card.cvc || '');
       fields.cvc = true; any = true;
     }
   }
@@ -192,14 +215,14 @@ function injectFill(card) {
     const n = document.querySelector(
       'input[autocomplete="cc-number"], input[name*="cardNumber"], input[id*="cardNumber"]'
     );
-    if (n) { setNativeValue(n, card.number || ''); fields.number = true; any = true; }
+    if (n) { typeValue(n, card.number || ''); fields.number = true; any = true; }
   }
   if (!fields.month && !fields.year) {
     const e = document.querySelector(
       'input[autocomplete="cc-exp"], input[name*="expiry"], input[id*="expiry"]'
     );
     if (e) {
-      setNativeValue(e, String(card.month || card.expiryMonth || '12').padStart(2, '0') + '/' +
+      typeValue(e, String(card.month || card.expiryMonth || '12').padStart(2, '0') + '/' +
         String(card.year || card.expiryYear || '2029').slice(-2));
       fields.month = true; fields.year = true; any = true;
     }
@@ -208,7 +231,7 @@ function injectFill(card) {
     const c = document.querySelector(
       'input[autocomplete="cc-csc"], input[name*="securityCode"], input[name*="cvc"]'
     );
-    if (c) { setNativeValue(c, card.cvc || ''); fields.cvc = true; any = true; }
+    if (c) { typeValue(c, card.cvc || ''); fields.cvc = true; any = true; }
   }
 
   const holderEl = document.querySelector(
