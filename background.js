@@ -97,6 +97,22 @@ chrome.webRequest.onErrorOccurred.addListener(
 );
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (msg && msg.action === 'FF_HOOK') {
+    const tabId = sender && sender.tab && sender.tab.id;
+    if (!tabId) {
+      sendResponse({ error: 'no-tab' });
+      return true;
+    }
+    chrome.scripting.executeScript({
+      target: { tabId: tabId, allFrames: true },
+      func: injectResponseHook
+    }).then(() => {
+      sendResponse({ ok: true });
+    }).catch((err) => {
+      sendResponse({ error: String((err && err.message) || err) });
+    });
+    return true;
+  }
   if (msg && msg.type === 'GET_CAPTURED') {
     sendResponse({ captured });
     return true;
@@ -246,6 +262,67 @@ function injectFill(card) {
   }
 
   return { fields: fields, any: any, url: location.href.slice(0, 120) };
+}
+
+function injectResponseHook() {
+  if (window.__nonohooked) return;
+  window.__nonohooked = true;
+
+  const isAdyen = (url) => /checkoutshopper.*\/(payments|sessions|submit)(\?|$)/.test(url);
+
+  const push = (data) => {
+    try {
+      document.dispatchEvent(new CustomEvent('nonnho-capture', { detail: data }));
+    } catch (e) {}
+  };
+
+  const OXHR = window.XMLHttpRequest;
+  if (OXHR) {
+    try {
+      window.XMLHttpRequest = function () {
+        const x = new OXHR();
+        const oOpen = x.open;
+        x.open = function (m, url, ...rest) {
+          x.__nurl = String(url || '');
+          try { return oOpen.apply(this, [m, url, ...rest]); }
+          catch (e) { return oOpen.apply(this, arguments); }
+        };
+        x.addEventListener('load', function () {
+          try {
+            const u = String(x.__nurl || '');
+            if (isAdyen(u)) {
+              push({ kind: 'xhr', url: u, status: x.status, body: x.responseText || '' });
+            }
+          } catch (e) {}
+        });
+        return x;
+      };
+      window.XMLHttpRequest.prototype = OXHR.prototype;
+    } catch (e) {}
+  }
+
+  const OF = window.fetch;
+  if (OF) {
+    try {
+      window.fetch = function (input, init) {
+        const url = (typeof input === 'string')
+          ? input
+          : (input && input.url ? input.url : '');
+        const p = OF.apply(this, arguments);
+        if (isAdyen(url)) {
+          p.then((res) => {
+            try {
+              const clone = res.clone();
+              clone.text().then((t) => {
+                push({ kind: 'fetch', url: url, status: res.status, body: t || '' });
+              }).catch(() => {});
+            } catch (e) {}
+          }).catch(() => {});
+        }
+        return p;
+      };
+    } catch (e) {}
+  }
 }
 
 function stripHdr(h) {
