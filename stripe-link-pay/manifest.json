@@ -1,0 +1,50 @@
+{
+  "manifest_version": 3,
+  "name": "Stripe Link Auto-Pay",
+  "version": "1.0.0",
+  "description": "Auto-fill, auto-submit and capture Stripe hosted checkout payment verdicts (decline code + message) per card.",
+  "permissions": [
+    "storage",
+    "activeTab",
+    "scripting",
+    "tabs",
+    "webRequest",
+    "notifications",
+    "debugger"
+  ],
+  "host_permissions": [
+    "https://checkout.stripe.com/*",
+    "https://js.stripe.com/*",
+    "https://api.stripe.com/*",
+    "https://*.stripe.com/*",
+    "https://pay.stripe.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup/popup.html",
+    "default_title": "Stripe Link Auto-Pay",
+    "default_icon": {
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "icons": {
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://checkout.stripe.com/*",
+        "https://js.stripe.com/*",
+        "https://*.stripe.com/*",
+        "https://pay.stripe.com/*"
+      ],
+      "js": ["lib/cardgen.js", "content.js"],
+      "run_at": "document_idle",
+      "all_frames": true
+    }
+  ]
+}

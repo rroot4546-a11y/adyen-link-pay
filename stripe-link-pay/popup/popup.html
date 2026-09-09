@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Stripe Responses</title>
+  <style>
+    body { margin: 0; background: #0b0e13; color: #e6e6e6; font-family: Segoe UI, Roboto, sans-serif; font-size: 12px; width: 340px; }
+    header { background: linear-gradient(135deg, #635bff, #4f46e5); color: #fff; padding: 10px 12px; display: flex; justify-content: space-between; align-items: center; }
+    header b { font-size: 13px; letter-spacing: .5px; }
+    #list { padding: 8px; max-height: 400px; overflow-y: auto; }
+    .item { background: #131a22; border: 1px solid #23303c; border-radius: 8px; padding: 8px; margin-bottom: 8px; }
+    .url { color: #8fa3b5; font-size: 10px; word-break: break-all; }
+    pre { margin: 6px 0 0; font-size: 10px; white-space: pre-wrap; word-break: break-all; color: #c9b8ff; max-height: 120px; overflow: auto; }
+    button { background: #23303c; color: #e6e6e6; border: none; border-radius: 6px; padding: 6px 8px; cursor: pointer; font-size: 11px; }
+    button:hover { background: #2c3b49; }
+    #empty { color: #5a6b7c; padding: 20px; text-align: center; }
+  </style>
+</head>
+<body>
+  <header>
+    <b>&#9889; STRIPE RESPONSES</b>
+    <button id="refresh">Refresh</button>
+  </header>
+  <div id="list"></div>
+  <div style="padding:8px;display:flex;gap:6px">
+    <button id="copyall" style="flex:1">Copy All</button>
+  </div>
+  <script src="popup.js"></script>
+</body>
+</html>
