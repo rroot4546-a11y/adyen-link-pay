@@ -15,13 +15,17 @@ function walkAll(root) {
     if (!node) return;
     if (seen.has(node)) return;
     seen.add(node);
-    let kids = [];
-    if (node.nodeType === 1 || node.shadowRoot) {
-      if (node.shadowRoot) kids = kids.concat(Array.from(node.shadowRoot.children));
-      kids = kids.concat(Array.from(node.children));
+    if (node.nodeType === 1 || node.nodeType === 9 || node.shadowRoot) {
+      let kids = [];
+      if (node.nodeType === 9) {
+        kids = kids.concat(Array.from(node.children));
+      } else {
+        if (node.shadowRoot) kids = kids.concat(Array.from(node.shadowRoot.children));
+        kids = kids.concat(Array.from(node.children));
+      }
+      for (const k of kids) walk(k);
+      if (node.nodeType === 1) out.push(node);
     }
-    for (const k of kids) walk(k);
-    if (node.nodeType === 1) out.push(node);
   })(root);
   return out;
 }

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Stripe Link Auto-Pay",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "description": "Auto-fill, auto-submit and capture Stripe hosted checkout payment verdicts (decline code + message) per card.",
   "permissions": [
     "storage",

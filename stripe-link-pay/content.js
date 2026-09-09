@@ -33,13 +33,17 @@
       if (!node) return;
       if (seen.has(node)) return;
       seen.add(node);
-      let kids = [];
-      if (node.nodeType === 1 || node.shadowRoot) {
-        if (node.shadowRoot) kids = kids.concat(Array.from(node.shadowRoot.children));
-        kids = kids.concat(Array.from(node.children));
+      if (node.nodeType === 1 || node.nodeType === 9 || node.shadowRoot) {
+        let kids = [];
+        if (node.nodeType === 9) {
+          kids = kids.concat(Array.from(node.children));
+        } else {
+          if (node.shadowRoot) kids = kids.concat(Array.from(node.shadowRoot.children));
+          kids = kids.concat(Array.from(node.children));
+        }
+        for (const k of kids) walk(k);
+        if (node.nodeType === 1) out.push(node);
       }
-      for (const k of kids) walk(k);
-      if (node.nodeType === 1) out.push(node);
     })(root);
     return out;
   }
@@ -453,7 +457,7 @@
         <div style="display:flex;align-items:center;gap:8px">
           <span style="font-size:16px">&#9889;</span>
           <b style="font-size:13px;letter-spacing:.5px">STRIPE AUTO-PAY</b>
-          <span id="stp-ver" style="font-size:9px;background:#ffffff33;color:#fff;padding:2px 6px;border-radius:8px">1.0.3</span>
+          <span id="stp-ver" style="font-size:9px;background:#ffffff33;color:#fff;padding:2px 6px;border-radius:8px">1.0.4</span>
         </div>
         <div style="display:flex;gap:6px">
           <button id="stp-dbg" title="Debug DOM" style="background:#ffffff22;border:none;color:#fff;cursor:pointer;width:22px;height:22px;border-radius:6px;font-size:10px;line-height:1;font-weight:700">DBG</button>
