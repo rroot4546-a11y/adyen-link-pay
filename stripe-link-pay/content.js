@@ -291,12 +291,26 @@
 
   function ensureCardMethod() {
     const els = walkAll(document);
+    const cardItems = els.filter((m) =>
+      m.id && /payment-method-accordion-item/.test(m.id)
+    );
+    const target = cardItems.find((m) => /card/.test(m.id)) || cardItems.find((m) => /debit/.test(m.id));
+    if (target) {
+      fireClick(target);
+      const label = els.find((m) => m.matches && m.matches("label[for='" + target.id + "']"));
+      if (label) fireClick(label);
+      const title = els.find((m) => m.matches && m.matches(
+        "button, [role='button'], div[role]") && (
+        (m.innerText || "").trim().toLowerCase() === "card" ||
+        (m.innerText || "").trim().toLowerCase().indexOf("card") === 0));
+      if (title) fireClick(title);
+      return true;
+    }
     for (const m of els) {
       const t = ((m.innerText || m.getAttribute("aria-label") || "") + "").toLowerCase();
       if (!/card|debit/.test(t)) continue;
-      if (m.matches && m.matches("button, [role='button'], div, label, input[type='radio']")) {
-        if (m.matches("input[type='radio']") && !m.checked) { m.click(); }
-        else if (m.matches("button, [role='button'], label") && m.offsetParent) { m.click(); }
+      if (m.matches && m.matches("button, [role='button'], label, div, h3, h4")) {
+        if (m.matches("input[type='radio']") || m.offsetParent) fireClick(m);
         return true;
       }
     }
@@ -439,7 +453,7 @@
         <div style="display:flex;align-items:center;gap:8px">
           <span style="font-size:16px">&#9889;</span>
           <b style="font-size:13px;letter-spacing:.5px">STRIPE AUTO-PAY</b>
-          <span id="stp-ver" style="font-size:9px;background:#ffffff33;color:#fff;padding:2px 6px;border-radius:8px">1.0</span>
+          <span id="stp-ver" style="font-size:9px;background:#ffffff33;color:#fff;padding:2px 6px;border-radius:8px">1.0.3</span>
         </div>
         <div style="display:flex;gap:6px">
           <button id="stp-dbg" title="Debug DOM" style="background:#ffffff22;border:none;color:#fff;cursor:pointer;width:22px;height:22px;border-radius:6px;font-size:10px;line-height:1;font-weight:700">DBG</button>
