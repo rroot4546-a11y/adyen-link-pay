@@ -9,7 +9,12 @@ const ADYEN_PATTERNS = [
 
 const MAX_STORED = 50;
 let captured = [];
+let capturedResponses = [];
 const pending = new Map();
+const dbgPending = new Map();
+let dbgTabId = -1;
+
+const RESP_RE = /checkoutshopper.*\/(payments|sessions|submit|result)(\?|$)/;
 
 chrome.webRequest.onBeforeRequest.addListener(
   (details) => {
@@ -96,6 +101,66 @@ chrome.webRequest.onErrorOccurred.addListener(
   { urls: ADYEN_PATTERNS }
 );
 
+chrome.tabs.onRemoved.addListener((tabId) => {
+  if (tabId === dbgTabId) detachDebugger();
+});
+
+chrome.debugger.onEvent.addListener((src, method, params) => {
+  if (!params) return;
+  if (method === "Network.responseReceived") {
+    const url = (params.response && params.response.url) || "";
+    if (RESP_RE.test(url)) dbgPending.set(params.requestId, { url: url, base: false });
+  } else if (method === "Network.loadingFinished") {
+    const rec = dbgPending.get(params.requestId);
+    if (!rec) return;
+    dbgPending.delete(params.requestId);
+    chrome.debugger.sendCommand(
+      { tabId: src.tabId },
+      "Network.getResponseBody",
+      { requestId: params.requestId }
+    ).then((res) => {
+      let body = res.body || "";
+      if (res.base64Encoded) {
+        try { body = atob(body); } catch (e) { body = ""; }
+      }
+      emitCapturedResponse(src.tabId, rec.url, body);
+    }).catch(() => {});
+  } else if (method === "Network.responseReceivedExtraInfo" || method === "Network.loadingFailed") {
+    dbgPending.delete(params.requestId);
+  }
+});
+
+chrome.debugger.onDetach.addListener(() => {
+  dbgTabId = -1;
+  dbgPending.clear();
+});
+
+function attachDebugger(tabId) {
+  return chrome.debugger.attach({ tabId: tabId }, "1.3").then(() => {
+    dbgTabId = tabId;
+    dbgPending.clear();
+    return chrome.debugger.sendCommand({ tabId: tabId }, "Network.enable");
+  });
+}
+
+function detachDebugger() {
+  if (dbgTabId === -1) return;
+  try { chrome.debugger.detach({ tabId: dbgTabId }); } catch (e) {}
+  dbgTabId = -1;
+  dbgPending.clear();
+}
+
+function emitCapturedResponse(tabId, url, body) {
+  const rec = { url: url.slice(0, 220), body: body, at: Date.now() };
+  capturedResponses.unshift(rec);
+  if (capturedResponses.length > 80) capturedResponses.pop();
+  chrome.storage.local.set({ nono_resp: rec });
+  chrome.runtime.sendMessage({
+    type: "ADYEN_RESPONSE_CAPTURED",
+    resp: rec
+  }).catch(() => {});
+}
+
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg && msg.action === 'FF_HOOK') {
     const tabId = sender && sender.tab && sender.tab.id;
@@ -103,14 +168,45 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       sendResponse({ error: 'no-tab' });
       return true;
     }
-    chrome.scripting.executeScript({
-      target: { tabId: tabId, allFrames: true },
+    const tryMain = () => chrome.scripting.executeScript({
+      target: { tabId: tabId, frameIds: [0] },
+      world: 'MAIN',
       func: injectResponseHook
-    }).then(() => {
+    });
+    tryMain().then(() => {
+      sendResponse({ ok: true, world: 'MAIN' });
+    }).catch(() => {
+      chrome.scripting.executeScript({
+        target: { tabId: tabId, allFrames: true },
+        func: injectResponseHook
+      }).then(() => {
+        sendResponse({ ok: true, world: 'default' });
+      }).catch((err) => {
+        sendResponse({ error: String((err && err.message) || err) });
+      });
+    });
+    return true;
+  }
+  if (msg && msg.action === 'DBG_ATTACH') {
+    const tabId = sender && sender.tab && sender.tab.id;
+    if (!tabId) {
+      sendResponse({ error: 'no-tab' });
+      return true;
+    }
+    attachDebugger(tabId).then(() => {
       sendResponse({ ok: true });
     }).catch((err) => {
       sendResponse({ error: String((err && err.message) || err) });
     });
+    return true;
+  }
+  if (msg && msg.action === 'DBG_DETACH') {
+    detachDebugger();
+    sendResponse({ ok: true });
+    return true;
+  }
+  if (msg && msg.type === 'GET_RESPONSES') {
+    sendResponse({ responses: capturedResponses });
     return true;
   }
   if (msg && msg.type === 'GET_CAPTURED') {
@@ -175,7 +271,9 @@ function injectFill(card) {
     const desc = Object.getOwnPropertyDescriptor(proto, 'value');
     if (!desc) return;
     desc.set.call(el, '');
-    el.dispatchEvent(new Event('input', { bubbles: true }));
+    try {
+      el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'deleteContentBackward' }));
+    } catch (e) {}
     const str = String(value);
     for (let i = 0; i < str.length; i++) {
       const ch = str[i];
@@ -183,12 +281,19 @@ function injectFill(card) {
       try {
         el.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: ch }));
         el.dispatchEvent(new KeyboardEvent('keypress', { bubbles: true, cancelable: true, key: ch }));
+        el.dispatchEvent(new InputEvent('beforeinput', { bubbles: true, cancelable: true, inputType: 'insertText', data: ch }));
+        el.dispatchEvent(new InputEvent('input', { bubbles: true, inputType: 'insertText', data: ch }));
         el.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true, cancelable: true, key: ch }));
-      } catch (e) {}
-      el.dispatchEvent(new Event('input', { bubbles: true }));
+      } catch (e) {
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+      }
     }
+    try {
+      el.dispatchEvent(new InputEvent('input', { bubbles: true }));
+    } catch (e) {}
     el.dispatchEvent(new Event('change', { bubbles: true }));
     el.dispatchEvent(new Event('blur', { bubbles: true }));
+    el.dispatchEvent(new FocusEvent('focusout', { bubbles: true }));
   }
 
   function classify(el) {
@@ -206,6 +311,7 @@ function injectFill(card) {
 
   const fields = { number: false, month: false, year: false, cvc: false };
   let any = false;
+  let cvcEl = null;
 
   const inputs = Array.from(document.querySelectorAll('input'));
   for (const inp of inputs) {
@@ -224,6 +330,7 @@ function injectFill(card) {
     } else if (kind === 'cvc' && !fields.cvc) {
       typeValue(inp, card.cvc || '');
       fields.cvc = true; any = true;
+      cvcEl = inp;
     }
   }
 
@@ -247,7 +354,16 @@ function injectFill(card) {
     const c = document.querySelector(
       'input[autocomplete="cc-csc"], input[name*="securityCode"], input[name*="cvc"]'
     );
-    if (c) { typeValue(c, card.cvc || ''); fields.cvc = true; any = true; }
+    if (c) { typeValue(c, card.cvc || ''); fields.cvc = true; any = true; cvcEl = c; }
+  }
+
+  if (cvcEl) {
+    const enter = { bubbles: true, cancelable: true, key: 'Enter', code: 'Enter', keyCode: 13, which: 13 };
+    try {
+      cvcEl.dispatchEvent(new KeyboardEvent('keydown', enter));
+      cvcEl.dispatchEvent(new KeyboardEvent('keypress', enter));
+      cvcEl.dispatchEvent(new KeyboardEvent('keyup', enter));
+    } catch (e) {}
   }
 
   const holderEl = document.querySelector(
