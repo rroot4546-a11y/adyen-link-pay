@@ -7,7 +7,9 @@
   "host_permissions": [
     "https://checkoutshopper-live.adyen.com/*",
     "https://checkoutshopper-test.adyen.com/*",
-    "https://*.adyen.com/*"
+    "https://*.adyen.com/*",
+    "https://*.adyen.link/*",
+    "https://adyen.link/*"
   ],
   "background": {
     "service_worker": "background.js"
@@ -21,7 +23,9 @@
       "matches": [
         "https://checkoutshopper-live.adyen.com/*",
         "https://checkoutshopper-test.adyen.com/*",
-        "https://*.adyen.com/*"
+        "https://*.adyen.com/*",
+        "https://*.adyen.link/*",
+        "https://adyen.link/*"
       ],
       "js": ["lib/cardgen.js", "content.js"],
       "run_at": "document_idle"
