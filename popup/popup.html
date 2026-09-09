@@ -2,65 +2,175 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Adyen Auto-Pay</title>
+  <title>Adyen Session Copier</title>
   <style>
-    body { width: 320px; background: #0f1115; color: #e6e6e6;
-           font-family: 'Segoe UI', monospace; padding: 14px; }
-    h1 { font-size: 15px; margin: 0 0 10px 0; color: #00d1b2; }
-    label { font-size: 11px; text-transform: uppercase; letter-spacing: 1px;
-            color: #888; display: block; margin: 10px 0 4px 0; }
-    input, select { width: 100%; padding: 8px; box-sizing: border-box;
-                    border: 1px solid #2a2e38; background: #171a21; color: #e6e6e6;
-                    border-radius: 4px; font-size: 13px; }
-    .row { display: flex; gap: 8px; }
-    .row > div { flex: 1; }
-    button { width: 100%; padding: 10px; margin-top: 14px;
-             background: #00d1b2; color: #000; border: none;
-             border-radius: 4px; font-weight: bold; cursor: pointer; font-size: 14px; }
-    button:hover { background: #00b39a; }
-    #status { margin-top: 10px; font-size: 12px; color: #ffcc00; }
-    #lastCardInfo { margin-top: 10px; font-size: 11px; color: #9be; word-break: break-all; }
-    .chk { display: flex; align-items: center; gap: 6px; margin-top: 10px; }
-    .chk input { width: auto; }
-    .chk label { margin: 0; }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      width: 380px;
+      background: #0b0e13;
+      color: #dde4ee;
+      font-family: 'Segoe UI', Roboto, sans-serif;
+      font-size: 13px;
+      padding: 0;
+    }
+    .topbar {
+      background: linear-gradient(135deg, #00d1b2, #00a88c);
+      color: #00110d;
+      padding: 12px 14px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .topbar b { font-size: 14px; letter-spacing: .4px; }
+    .topbar button {
+      background: #00110d22;
+      border: none;
+      color: #00110d;
+      padding: 6px 12px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-weight: 700;
+      font-size: 12px;
+    }
+    .topbar button:hover { background: #00110d33; }
+    .status {
+      padding: 8px 14px;
+      color: #6b7b8d;
+      font-size: 11px;
+      display: flex;
+      justify-content: space-between;
+      border-bottom: 1px solid #1a2430;
+    }
+    #requests { padding: 10px 14px 14px; }
+    .empty {
+      color: #6b7b8d;
+      text-align: center;
+      padding: 26px 10px;
+      line-height: 1.6;
+    }
+    .empty small { color: #46566a; }
+    .req-card {
+      border: 1px solid #1f2a33;
+      border-radius: 10px;
+      margin-bottom: 8px;
+      overflow: hidden;
+      background: #10151c;
+    }
+    .req-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 8px;
+      padding: 9px 10px;
+      cursor: pointer;
+    }
+    .req-header:hover { background: #141b24; }
+    .url-wrap { flex: 1; overflow: hidden; }
+    .url {
+      font-family: Consolas, Menlo, monospace;
+      font-size: 11px;
+      color: #7fd4c2;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      display: block;
+    }
+    .method {
+      font-size: 10px;
+      font-weight: 700;
+      color: #ffd166;
+      margin-right: 6px;
+    }
+    .btn-copy {
+      background: #23303c;
+      border: none;
+      color: #e6e6e6;
+      padding: 6px 12px;
+      border-radius: 7px;
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 600;
+    }
+    .btn-copy:hover { background: #2b3b4a; }
+    .detail { display: none; padding: 0 10px 10px; }
+    .detail.open { display: block; }
+    .detail-label {
+      font-size: 10px;
+      text-transform: uppercase;
+      color: #6b7b8d;
+      margin: 6px 0 6px;
+    }
+    .detail pre {
+      background: #0a0d12;
+      border: 1px solid #1a2430;
+      border-radius: 8px;
+      padding: 10px;
+      font-family: Consolas, Menlo, monospace;
+      font-size: 10.5px;
+      color: #9be;
+      white-space: pre-wrap;
+      word-break: break-all;
+      max-height: 260px;
+      overflow: auto;
+      line-height: 1.5;
+    }
+    .detail-actions { margin-top: 8px; display: flex; justify-content: flex-end; }
+    .btn-copy-detail {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      background: linear-gradient(135deg, #00d1b2, #00a88c);
+      color: #00110d;
+      border: none;
+      padding: 8px 14px;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 700;
+    }
+    .btn-copy-detail .icon { width: 14px; height: 14px; fill: currentColor; }
+    .btn-copy-detail.copied { background: #3fbf8d; }
+    .btn-copy.copied { background: #3fbf8d; color: #00110d; }
+    .bar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin: 2px 0 10px;
+    }
+    .bar span { font-size: 11px; color: #6b7b8d; }
+    .hint {
+      font-size: 10px;
+      color: #46566a;
+      margin-top: 6px;
+      text-align: center;
+      border-top: 1px solid #1a2430;
+      padding-top: 8px;
+    }
+    .tipbar {
+      padding: 8px 14px;
+      background: #10151c;
+      border-bottom: 1px solid #1a2430;
+      font-size: 10px;
+      color: #7fd4c2;
+    }
   </style>
 </head>
 <body>
-  <h1>Adyen Link Auto-Pay</h1>
-
-  <label>Custom BIN</label>
-  <input id="bin" type="text" placeholder="e.g. 411111111111" maxlength="19" inputmode="numeric">
-
-  <div class="row">
-    <div>
-      <label>Card Length</label>
-      <select id="cardLength">
-        <option value="16">16</option>
-        <option value="15">15</option>
-        <option value="19">19</option>
-      </select>
-    </div>
-    <div>
-      <label>Card Holder</label>
-      <input id="holder" type="text" placeholder="JOHN DOE">
-    </div>
+  <div class="topbar">
+    <b>ADYEN SESSION COPIER</b>
+    <button id="clear">Clear</button>
   </div>
 
-  <div class="row">
-    <div class="chk">
-      <input id="autoSubmit" type="checkbox">
-      <label for="autoSubmit">Auto Submit</label>
-    </div>
-    <div class="chk">
-      <input id="autoOnLoad" type="checkbox">
-      <label for="autoOnLoad">Auto on Load</label>
-    </div>
+  <div class="status">
+    <span>Requests captured</span>
+    <span id="count">0</span>
   </div>
 
-  <button id="payBtn">Generate &amp; Pay Now</button>
+  <div class="tipbar">
+    Capture picks up checkoutshopper sessions requests. Tap a row to expand, then copy the cURL.
+  </div>
 
-  <div id="status"></div>
-  <div id="lastCardInfo"></div>
+  <div id="requests"></div>
 
   <script src="popup.js"></script>
 </body>

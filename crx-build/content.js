@@ -30,32 +30,41 @@
         ? HTMLSelectElement.prototype
         : HTMLInputElement.prototype;
     const desc = Object.getOwnPropertyDescriptor(proto, "value");
+    if (!desc) return;
     desc.set.call(el, value);
     el.dispatchEvent(new Event("input", { bubbles: true }));
     el.dispatchEvent(new Event("change", { bubbles: true }));
     el.dispatchEvent(new Event("blur", { bubbles: true }));
   }
 
-  function classifyField(el) {
-    const s = ((el.id || "") + " " + (el.name || "") + " " +
+  function attrsOf(el) {
+    return ((el.id || "") + " " + (el.name || "") + " " +
       (el.getAttribute("aria-label") || "") + " " +
       (el.getAttribute("data-fieldtype") || "") + " " +
-      (el.getAttribute("autocomplete") || "")).toLowerCase();
-    if (/(^|\W)(card\W*number|pan|ccnum)|cc-number|encryptedcardnumber/.test(s)) return "number";
-    if (/(^|\W)exp(iry)?(\W.*)?(mon(th)?)?$|expmon|expiry-month|cc-exp$/.test(s)) return "month";
-    if (/exp.*year|expyear/.test(s) || (/(^|\W)exp(iry)?\W/.test(s) && /year/.test(s))) return "year";
-    if (/cvc|cvv|cid|csc|security|cc-csc/.test(s)) return "cvc";
+      (el.getAttribute("autocomplete") || "") + " " +
+      (el.className || "")).toLowerCase();
+  }
+
+  function classifyField(el) {
+    const s = attrsOf(el);
+    if (/(card\s*[-_ ]*number|ccnum|cc[-_ ]number|\bpan\b|encrypted\w*(number|pan))/.test(s)) return "number";
+    if (/(expiry|expiration)[-_ ]*(month)?|encrypted\w*month|expmonth/.test(s) && !/year/.test(s)) return "month";
+    if (/(expiry|expiration)[-_ ]*year|encrypted\w*year|expyear/.test(s) || (/exp/.test(s) && /year/.test(s))) return "year";
+    if (/(cvc|cvv|csc|security)[-_ ]*(code)?/.test(s)) return "cvc";
     return null;
+  }
+
+  function visibleInputs() {
+    return Array.from(document.querySelectorAll("input")).filter(
+      (i) => i.type !== "hidden" && (i.offsetParent !== null || i.type === "tel" || i.type === "text")
+    );
   }
 
   function fillOwned(card) {
     const fields = { number: false, month: false, year: false, cvc: false };
     let any = false;
 
-    const candidates = Array.from(document.querySelectorAll("input"))
-      .filter((i) => i.type !== "hidden");
-
-    for (const inp of candidates) {
+    for (const inp of visibleInputs()) {
       const kind = classifyField(inp);
       if (!kind) continue;
       if (kind === "number" && !fields.number) {
@@ -74,8 +83,7 @@
     }
 
     if (!fields.month && !fields.year) {
-      const expSel = document.querySelector('input[autocomplete="cc-exp"]') ||
-        document.querySelector('input[name*="expiry"]');
+      const expSel = document.querySelector('input[autocomplete="cc-exp"], input[name*="expiry"], input[id*="expiry"]');
       if (expSel) {
         setNativeValue(expSel,
           (card.month || card.expiryMonth).padStart(2, "0") + "/" +
@@ -85,8 +93,7 @@
     }
 
     if (!fields.number) {
-      const numEl = document.querySelector('input[autocomplete="cc-number"]') ||
-        document.querySelector('input[name*="cardNumber"]');
+      const numEl = document.querySelector('input[autocomplete="cc-number"], input[name*="cardNumber"], input[id*="cardNumber"]');
       if (numEl) {
         setNativeValue(numEl, card.number);
         fields.number = true; any = true;
@@ -94,8 +101,7 @@
     }
 
     if (!fields.cvc) {
-      const cvcEl = document.querySelector('input[autocomplete="cc-csc"]') ||
-        document.querySelector('input[name*="securityCode"]');
+      const cvcEl = document.querySelector('input[autocomplete="cc-csc"], input[name*="securityCode"], input[name*="cvc"]');
       if (cvcEl) {
         setNativeValue(cvcEl, card.cvc);
         fields.cvc = true; any = true;
@@ -147,23 +153,23 @@
     });
   }
 
+  function sleep(ms) {
+    return new Promise((r) => setTimeout(r, ms));
+  }
+
   async function waitReports(pref, minWait, maxWait) {
     const start = Date.now();
     let lastCount = -1;
     let lastChange = Date.now();
-    await sleep(600);
-    while (Date.now() - start < (maxWait || 6000)) {
+    await sleep(700);
+    while (Date.now() - start < (maxWait || 7000)) {
       const s = await summarize(pref);
       if (s.frames > 0 && s.frames !== lastCount) {
         lastCount = s.frames;
         lastChange = Date.now();
       }
-      if (s.frames > 0 && Date.now() - lastChange > 500) {
-        return s;
-      }
-      if (Date.now() - start >= (minWait || 1500) && s.frames > 0) {
-        return s;
-      }
+      if (s.frames > 0 && Date.now() - lastChange > 550) return s;
+      if (Date.now() - start >= (minWait || 1800) && s.frames > 0) return s;
       await sleep(250);
     }
     return summarize(pref);
@@ -171,6 +177,7 @@
 
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== "local") return;
+
     const ff = changes["nono_ff"];
     if (ff && ff.newValue && ff.newValue.card) {
       currentTick = ff.newValue.tick;
@@ -178,16 +185,57 @@
       report("nono_ff", { tick: ff.newValue.tick, fields: r.fields, any: r.any });
       return;
     }
+
     const dt = changes["nono_detect"];
     if (dt && dt.newValue) {
       currentTick = dt.newValue.tick;
       const text = document.body ? document.body.innerText.slice(0, 4000) : "";
       report("nono_dt", { tick: dt.newValue.tick, text: text });
+      return;
+    }
+
+    const dbg = changes["nono_dbg"];
+    if (dbg && dbg.newValue) {
+      currentTick = dbg.newValue.tick;
+      const inputs = visibleInputs().map((i) => ({
+        t: i.type,
+        n: i.name || "",
+        id: i.id || "",
+        al: i.getAttribute("aria-label") || "",
+        ac: i.getAttribute("autocomplete") || "",
+        ft: i.getAttribute("data-fieldtype") || "",
+        cls: (i.className || "").slice(0, 40),
+        vis: !!(i.offsetWidth || i.offsetHeight)
+      }));
+      const txt = JSON.stringify({ url: location.href.slice(0, 140), inputs: inputs, total: document.querySelectorAll("input").length }).slice(0, 3000);
+      report("nono_dbg", { tick: dbg.newValue.tick, text: txt });
     }
   });
 
-  function sleep(ms) {
-    return new Promise((r) => setTimeout(r, ms));
+  function ensureCardMethod() {
+    const methods = Array.from(document.querySelectorAll(
+      '.adyen-checkout__payment-method, [data-testid*="payment-method"], [class*="payment-method"]'
+    ));
+    for (const m of methods) {
+      const txt = (m.innerText || "").toLowerCase();
+      if (/card|credit|debit/.test(txt)) {
+        const open = m.querySelector(".adyen-checkout__payment-method__details") &&
+          m.querySelector(".adyen-checkout__payment-method__details").offsetWidth > 0;
+        if (!open) {
+          m.click();
+          return true;
+        }
+      }
+    }
+    const btns = Array.from(document.querySelectorAll("button, label, div[role='button']"));
+    for (const b of btns) {
+      const t = (b.innerText || "").replace(/\s+/g, " ").trim().toLowerCase();
+      if (/^(credit|debit)?\s*(card|pay by card)$/.test(t) && b.offsetParent) {
+        b.click();
+        return true;
+      }
+    }
+    return false;
   }
 
   function findPayButton() {
@@ -195,8 +243,8 @@
     for (const b of buttons) {
       const rect = b.getBoundingClientRect();
       if (rect.width === 0 && rect.height === 0) continue;
-      const text = ((b.innerText || "") + " " + (b.getAttribute("aria-label") || "")).trim();
-      if (/^(pay|pay now|pay \d|proceed to pay|confirm|submit|place order)/i.test(text) ||
+      const text = ((b.innerText || "") + " " + (b.getAttribute("aria-label") || "")).trim().toLowerCase();
+      if (/^(pay|pay now|pay \$?\d|proceed to pay|confirm|submit|place order)/i.test(text) ||
         /adyen-checkout__button/.test(b.className || "")) {
         return b;
       }
@@ -228,7 +276,7 @@
     const all = (topDocText() + " " + texts.join(" ")).toLowerCase();
     const html = topDocHtml();
 
-    if (/adyen-checkout__threeds2|threeds2|3d-secure|\b3ds\b|threeds|challenge/i.test(html)) {
+    if (/adyen-checkout__threeds2|threeds2|3d-secure|\b3ds\b|threeds|challenge/.test(html)) {
       return { ok: true, label: "3DS CHALLENGE" };
     }
     const good = [
@@ -255,7 +303,9 @@
   function buildPanel() {
     if (document.getElementById("nono-panel")) return;
 
-    const styles = [
+    const panel = document.createElement("div");
+    panel.id = "nono-panel";
+    panel.style.cssText = [
       "position:fixed", "top:10px", "right:10px", "z-index:2147483647",
       "width:min(320px, calc(100vw - 20px))", "background:#0b0e13",
       "color:#e6e6e6", "font-family:Segoe UI, Roboto, sans-serif",
@@ -266,18 +316,15 @@
       "display:flex", "flex-direction:column"
     ].join(";");
 
-    const panel = document.createElement("div");
-    panel.id = "nono-panel";
-    panel.style.cssText = styles;
-
     panel.innerHTML = `
       <div style="background:linear-gradient(135deg,#00d1b2,#00a88c);color:#00110d;padding:10px 12px;display:flex;justify-content:space-between;align-items:center">
         <div style="display:flex;align-items:center;gap:8px">
           <span style="font-size:16px">&#9889;</span>
           <b style="font-size:13px;letter-spacing:.5px">ADYEN AUTO-PAY</b>
-          <span id="nono-ver" style="font-size:9px;background:#00110d33;color:#00110d;padding:2px 6px;border-radius:8px">v1.2</span>
+          <span id="nono-ver" style="font-size:9px;background:#00110d33;color:#00110d;padding:2px 6px;border-radius:8px">1.3</span>
         </div>
         <div style="display:flex;gap:6px">
+          <button id="nono-dbg" title="Debug DOM" style="background:#00110d22;border:none;color:#00110d;cursor:pointer;width:22px;height:22px;border-radius:6px;font-size:10px;line-height:1;font-weight:700">DBG</button>
           <button id="nono-min" title="Minimize" style="background:#00110d22;border:none;color:#00110d;cursor:pointer;width:22px;height:22px;border-radius:6px;font-size:12px;line-height:1">&#8211;</button>
         </div>
       </div>
@@ -388,12 +435,12 @@
     pill.addEventListener("pointermove", (e) => {
       if (!dragging) return;
       const y = e.clientY - dragY;
-      const maxY = window.innerHeight - pill.offsetHeight - 8;
+      const maxY = window.innerHeight - 56;
       pill.style.top = Math.min(Math.max(8, y), maxY) + "px";
     });
     pill.addEventListener("pointerup", (e) => {
       dragging = false;
-      pill.releasePointerCapture(e.pointerId);
+      if (pill.hasPointerCapture && pill.hasPointerCapture(e.pointerId)) pill.releasePointerCapture(e.pointerId);
     });
     pill.addEventListener("click", () => {
       if (dragging) return;
@@ -417,19 +464,47 @@
 
     function logMsg(m) { log.textContent = m; }
     function updateCount() {
-      const t = "Hits: " + hitCount;
-      count.textContent = t;
+      count.textContent = "Hits: " + hitCount;
       pillCount.textContent = String(hitCount);
     }
-    function logResult(icon, text, color) {
+    function logResult(icon, text, color, mono) {
       const line = document.createElement("div");
       line.style.cssText = "padding:3px 0;border-bottom:1px solid #141c26;color:" + color + ";white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:flex;gap:4px;align-items:center";
+      if (mono) line.style.color = "#e6e6e6";
       line.innerHTML = '<span style="flex-shrink:0">' + icon + '</span><span style="overflow:hidden;text-overflow:ellipsis">' + text + '</span>';
       box.prepend(line);
-      while (box.children.length > 10) box.lastChild.remove();
+      while (box.children.length > 12) box.lastChild.remove();
+    }
+
+    async function debugDump() {
+      logMsg("Gathering frame inventory...");
+      const tick = Date.now() + Math.floor(Math.random() * 1000);
+      currentTick = tick;
+      clearReports("nono_dbg");
+      chrome.storage.local.set({ nono_dbg: { tick: tick } });
+      await sleep(1400);
+      const s = await summarize("nono_dbg");
+
+      const iframes = Array.from(document.querySelectorAll("iframe")).map((f) => ({
+        src: (f.src || "").slice(0, 130),
+        title: f.title || "",
+        h: f.offsetHeight,
+        w: f.offsetWidth
+      }));
+      const top = JSON.stringify({ url: location.href, iframes: iframes, inputs: visibleInputs().length });
+      let out = top;
+      s.texts.forEach((t, i) => { out += "\n---FRAME " + (i + 1) + "--- " + t; });
+      if (!s.texts.length) out += "\n(no frame handlers answered)";
+
+      const line = document.createElement("div");
+      line.style.cssText = "padding:3px 0;border-bottom:1px dashed #1a2430;color:#9be;font-size:10px;white-space:pre-wrap;word-break:break-all;max-height:250px;overflow:auto";
+      line.textContent = out;
+      box.prepend(line);
+      logMsg("Debug dump ready. Read the top entry.");
     }
 
     el("#nono-min").addEventListener("click", minimize);
+    el("#nono-dbg").addEventListener("click", debugDump);
     el("#nono-close").addEventListener("click", () => {
       panel.style.opacity = "0";
       setTimeout(() => panel.remove(), 200);
@@ -494,13 +569,16 @@
         card.year = card.expiryYear;
       }
 
+      ensureCardMethod();
+      await sleep(600);
+
       const tick = Date.now() + Math.floor(Math.random() * 1000);
       currentTick = tick;
       clearReports("nono_ff");
       chrome.storage.local.set({ nono_ff: { card: card, tick: tick } });
       window.__nonoLog && window.__nonoLog("Hit #" + (hitCount + 1) + " -> " + card.number);
 
-      const st = await waitReports("nono_ff", 1600, 7000);
+      const st = await waitReports("nono_ff", 1800, 9000);
 
       let submitted = false;
       if (cfg.autoSubmit && st.any) {

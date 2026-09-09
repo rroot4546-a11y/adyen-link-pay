@@ -1,9 +1,16 @@
 {
   "manifest_version": 3,
   "name": "Adyen Link Auto-Pay",
-  "version": "1.2.0",
-  "description": "Auto-fill and pay Adyen hosted links with generated card data.",
-  "permissions": ["storage", "activeTab", "scripting", "tabs"],
+  "version": "1.3.0",
+  "description": "Auto-fill, auto-submit and capture checkoutshopper payment requests as cURL.",
+  "permissions": [
+    "storage",
+    "activeTab",
+    "scripting",
+    "tabs",
+    "webRequest",
+    "notifications"
+  ],
   "host_permissions": [
     "https://checkoutshopper-live.adyen.com/*",
     "https://checkoutshopper-test.adyen.com/*",
@@ -16,7 +23,15 @@
   },
   "action": {
     "default_popup": "popup/popup.html",
-    "default_title": "Adyen Link Auto-Pay"
+    "default_title": "Adyen Link Auto-Pay",
+    "default_icon": {
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "icons": {
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
   },
   "content_scripts": [
     {
