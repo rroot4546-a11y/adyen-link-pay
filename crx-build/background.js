@@ -107,7 +107,123 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     sendResponse({ ok: true });
     return true;
   }
+  if (msg && msg.action === 'FF_EXEC') {
+    const tabId = sender && sender.tab && sender.tab.id;
+    if (!tabId) {
+      sendResponse({ error: 'no-tab', results: [] });
+      return true;
+    }
+    chrome.scripting.executeScript({
+      target: { tabId: tabId, allFrames: true },
+      func: injectFill,
+      args: [msg.card || {}]
+    }).then((res) => {
+      const results = (res || [])
+        .map((r) => r.result)
+        .filter(Boolean);
+      const any = results.some((r) => r && r.any);
+      const fields = results.reduce((acc, r) => {
+        if (!r || !r.fields) return acc;
+        ['number', 'month', 'year', 'cvc'].forEach((f) => {
+          if (r.fields[f]) acc[f] = true;
+        });
+        return acc;
+      }, { number: false, month: false, year: false, cvc: false });
+      sendResponse({ results: results, any: any, fields: fields });
+    }).catch((err) => {
+      sendResponse({ error: String((err && err.message) || err), results: [] });
+    });
+    return true;
+  }
 });
+
+function injectFill(card) {
+  function setNativeValue(el, value) {
+    const proto = el instanceof HTMLTextAreaElement
+      ? HTMLTextAreaElement.prototype
+      : el instanceof HTMLSelectElement
+        ? HTMLSelectElement.prototype
+        : HTMLInputElement.prototype;
+    const desc = Object.getOwnPropertyDescriptor(proto, 'value');
+    if (!desc) return;
+    desc.set.call(el, value);
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+    el.dispatchEvent(new Event('blur', { bubbles: true }));
+  }
+
+  function classify(el) {
+    const s = ((el.id || '') + ' ' + (el.name || '') + ' ' +
+      (el.getAttribute('aria-label') || '') + ' ' +
+      (el.getAttribute('data-fieldtype') || '') + ' ' +
+      (el.getAttribute('autocomplete') || '') + ' ' +
+      (typeof el.className === 'string' ? el.className : '')).toLowerCase();
+    if (/(card\s*[-_ ]*number|ccnum|cc[-_ ]number|\bpan\b|encrypted\w*(number|pan))/.test(s)) return 'number';
+    if (/(expiry|expiration)[-_ ]*(month)?|encrypted\w*month|expmonth/.test(s) && !/year/.test(s)) return 'month';
+    if (/(expiry|expiration)[-_ ]*year|encrypted\w*year|expyear/.test(s) || (/exp/.test(s) && /year/.test(s))) return 'year';
+    if (/(cvc|cvv|csc|security)[-_ ]*(code)?/.test(s)) return 'cvc';
+    return null;
+  }
+
+  const fields = { number: false, month: false, year: false, cvc: false };
+  let any = false;
+
+  const inputs = Array.from(document.querySelectorAll('input'));
+  for (const inp of inputs) {
+    if (inp.type === 'hidden') continue;
+    const kind = classify(inp);
+    if (!kind) continue;
+    if (kind === 'number' && !fields.number) {
+      setNativeValue(inp, card.number || '');
+      fields.number = true; any = true;
+    } else if (kind === 'month' && !fields.month) {
+      setNativeValue(inp, String(card.month || card.expiryMonth || '12').padStart(2, '0'));
+      fields.month = true; any = true;
+    } else if (kind === 'year' && !fields.year) {
+      setNativeValue(inp, String(card.year || card.expiryYear || '2029').slice(-2));
+      fields.year = true; any = true;
+    } else if (kind === 'cvc' && !fields.cvc) {
+      setNativeValue(inp, card.cvc || '');
+      fields.cvc = true; any = true;
+    }
+  }
+
+  if (!fields.number) {
+    const n = document.querySelector(
+      'input[autocomplete="cc-number"], input[name*="cardNumber"], input[id*="cardNumber"]'
+    );
+    if (n) { setNativeValue(n, card.number || ''); fields.number = true; any = true; }
+  }
+  if (!fields.month && !fields.year) {
+    const e = document.querySelector(
+      'input[autocomplete="cc-exp"], input[name*="expiry"], input[id*="expiry"]'
+    );
+    if (e) {
+      setNativeValue(e, String(card.month || card.expiryMonth || '12').padStart(2, '0') + '/' +
+        String(card.year || card.expiryYear || '2029').slice(-2));
+      fields.month = true; fields.year = true; any = true;
+    }
+  }
+  if (!fields.cvc) {
+    const c = document.querySelector(
+      'input[autocomplete="cc-csc"], input[name*="securityCode"], input[name*="cvc"]'
+    );
+    if (c) { setNativeValue(c, card.cvc || ''); fields.cvc = true; any = true; }
+  }
+
+  const holderEl = document.querySelector(
+    'input[name*="holder"], input[id*="holder"], input[autocomplete="cc-name"]'
+  );
+  if (holderEl) setNativeValue(holderEl, card.holder || 'JOHN DOE');
+
+  const emailEl = document.querySelector('input[type="email"], input[name*="email"], input[id*="email"]');
+  const candidateEmail = card.holder && /@/.test(card.holder) ? card.holder : (card.email || '');
+  if (emailEl && candidateEmail) {
+    setNativeValue(emailEl, candidateEmail);
+  }
+
+  return { fields: fields, any: any, url: location.href.slice(0, 120) };
+}
 
 function stripHdr(h) {
   const name = (h.name || '').toLowerCase();

