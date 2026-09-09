@@ -670,9 +670,14 @@
         await sleep(450);
         st = await fillRound(card);
         if (st.any) break;
-        const snippet = (document.body ? (document.body.innerText + "").slice(0, 180) : "");
-        window.__nonoLog && window.__nonoLog("No fields round " + (round + 1) + "/4. Page: " +
-          snippet.replace(/\s+/g, " ").trim().slice(0, 120));
+        const snippet = (document.body ? (document.body.innerText + "").slice(0, 320) : "");
+        const frames = Array.from(document.querySelectorAll("iframe")).map((f) => (f.src || f.title || "?").slice(0, 90));
+        const btns = walkAll(document).filter((b) => b.matches && b.matches("button, [role='button'], input[type='submit']"))
+          .filter((b) => { const r = b.getBoundingClientRect(); return r.width && r.height; })
+          .map((b) => (b.innerText || b.value || b.getAttribute("aria-label") || "btn").trim().slice(0, 24));
+        window.__nonoLog && window.__nonoLog("Round " + (round + 1) + "/4. Page: " +
+          snippet.replace(/\s+/g, " ").trim().slice(0, 200) + " || ifr:" + frames.length + " " +
+          frames.slice(0, 4).join(",") + " || btns: " + btns.slice(0, 8).join(" | "));
         if (round === 0) {
           const opener = findOpenCardForm();
           if (opener) {
