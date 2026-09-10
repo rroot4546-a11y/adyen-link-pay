@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Adyen Link Auto-Pay",
-  "version": "1.7.0",
-  "description": "Auto-fill, auto-submit, proxy rotation and capture checkoutshopper payment requests as cURL + response verdicts.",
+  "version": "1.8.0",
+  "description": "Auto-fill, auto-submit, proxy + UA rotation, sandbox-gated Telegram hit bridge, capture as cURL + verdicts.",
   "permissions": [
     "storage",
     "activeTab",
@@ -19,6 +19,7 @@
     "https://*.adyen.com/*",
     "https://*.adyen.link/*",
     "https://adyen.link/*",
+    "https://api.telegram.org/*",
     "<all_urls>"
   ],
   "options_page": "options/options.html",

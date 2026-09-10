@@ -153,6 +153,35 @@
     </div>
 
     <div class="card">
+      <h3>Telegram bridge (sandbox only)</h3>
+      <div class="row">
+        <label class="switch">
+          <input type="checkbox" id="tg-enabled">
+          <span class="slider"></span>
+        </label>
+        <span>Send hits to Telegram</span>
+      </div>
+      <div class="row" style="margin-top:6px">
+        <label for="tg-token">Bot token</label>
+        <input type="password" id="tg-token" placeholder="123456:ABC..." style="flex:1;min-width:200px">
+      </div>
+      <div class="row">
+        <label for="tg-chat">Chat / channel ID</label>
+        <input type="text" id="tg-chat" placeholder="-1001234567890" style="flex:1;min-width:200px">
+      </div>
+      <div class="row">
+        <label for="tg-allow">Sandbox origins (comma-separated)</label>
+        <input type="text" id="tg-allow" style="flex:1;min-width:200px">
+      </div>
+      <div class="row">
+        <button id="tg-save" class="btn primary">Save</button>
+        <button id="tg-test" class="btn">Send test</button>
+      </div>
+      <div id="tg-status" class="status">Gated to sandbox origins only. Live adyen.com domains are hard-blocked in code.</div>
+      <div class="hint">Add the token here — it is stored in chrome.storage, never in the repo.</div>
+    </div>
+
+    <div class="card">
       <h3>Proxy list</h3>
       <textarea id="proxies" spellcheck="false" placeholder="One proxy per line (HTTP/HTTPS/SOCKS4/SOCKS5):&#10;&#10;http://user:pass@1.2.3.4:8080&#10;1.2.3.4:3128&#10;socks5://1.2.3.4:1080&#10;https://1.2.3.4:443"></textarea>
       <div class="row" style="margin-top:12px">

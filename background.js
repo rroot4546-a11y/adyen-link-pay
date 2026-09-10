@@ -1,6 +1,7 @@
 "use strict";
 
 importScripts("proxy.js");
+importScripts("telegram.js");
 
 const ADYEN_PATTERNS = [
   '*://checkoutshopper-live.adyen.com/checkoutshopper/v1/*',
@@ -225,6 +226,60 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg && msg.action === 'DBG_DETACH') {
     detachDebugger();
     sendResponse({ ok: true });
+    return true;
+  }
+  function actionIsTG(msg) {
+  return /^TG_/.test(msg.action || "");
+}
+
+async function handleTGMessage(msg, sendResponse, sender) {
+  try {
+    switch (msg.action) {
+      case "TG_GET": {
+        const cfg = await getTg();
+        sendResponse({ cfg: { enabled: cfg.enabled, chatId: cfg.chatId, allow: cfg.allow, hasToken: !!cfg.token } });
+        return;
+      }
+      case "TG_SET": {
+        const cfg = await getTg();
+        const next = {
+          enabled: typeof msg.enabled === "boolean" ? msg.enabled : cfg.enabled,
+          token: typeof msg.token === "string" && msg.token ? msg.token : cfg.token,
+          chatId: typeof msg.chatId === "string" ? msg.chatId : cfg.chatId,
+          allow: Array.isArray(msg.allow) ? msg.allow : (cfg.allow || DEFAULT_ALLOW.slice())
+        };
+        await setTg(next);
+        sendResponse({ ok: true, hasToken: !!next.token });
+        return;
+      }
+      case "TG_TEST": {
+        const r = await tgSend("✅ Telegram connected — Adyen Link sandbox bridge is live.");
+        sendResponse(r);
+        return;
+      }
+      case "TG_HIT": {
+        const tabUrl = sender && sender.tab ? sender.tab.url : "";
+        const g = urlAllowed(tabUrl);
+        if (!g.ok) { sendResponse({ ok: false, gated: true, reason: g.reason }); return; }
+        const cfg = await getTg();
+        if (!originPermitted(tabUrl, cfg)) {
+          sendResponse({ ok: false, gated: true, reason: "origin not in sandbox allowlist" });
+          return;
+        }
+        const r = await tgSend(msg.text || "");
+        sendResponse(r);
+        return;
+      }
+      default:
+        sendResponse({ ok: false, error: "unknown tg action" });
+    }
+  } catch (e) {
+    sendResponse({ ok: false, error: String((e && e.message) || e) });
+  }
+}
+
+if (msg && actionIsTG(msg)) {
+    handleTGMessage(msg, sendResponse, sender);
     return true;
   }
   if (msg && /^UA_/.test(msg.action || "")) {

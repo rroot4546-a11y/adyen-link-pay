@@ -68,6 +68,13 @@ async function refresh() {
     $("uas").value = (ua.list || []).join("\n");
     setUAStatus(ua.state, ua.list || []);
   }
+  const tg = await send("TG_GET");
+  if (tg.cfg) {
+    $("tg-enabled").checked = !!tg.cfg.enabled;
+    $("tg-token").value = tg.cfg.hasToken ? "••••••••••••" : "";
+    $("tg-chat").value = tg.cfg.chatId || "";
+    $("tg-allow").value = (tg.cfg.allow || []).join(",");
+  }
 }
 
 function setUAStatus(state, list) {
@@ -138,6 +145,33 @@ document.addEventListener("DOMContentLoaded", async () => {
       $("ua-status").textContent = "Rotate failed: " + (r.error || "?");
       $("ua-status").className = "status err";
     }
+  });
+
+  let tokenDirty = false;
+  $("tg-token").addEventListener("input", () => { tokenDirty = true; });
+
+  $("tg-save").addEventListener("click", async () => {
+    let token = "";
+    if (tokenDirty) token = $("tg-token").value.trim();
+    const r = await send("TG_SET", {
+      enabled: $("tg-enabled").checked,
+      token: token,
+      chatId: $("tg-chat").value.trim(),
+      allow: $("tg-allow").value.split(",").map((s) => s.trim()).filter(Boolean)
+    });
+    tokenDirty = false;
+    $("tg-status").textContent = r.ok ? "Telegram config saved." : "Save failed: " + (r.error || "?");
+    $("tg-status").className = r.ok ? "status ok" : "status err";
+    $("tg-token").value = r.hasToken ? "••••••••••••" : "";
+  });
+
+  $("tg-test").addEventListener("click", async () => {
+    $("tg-status").textContent = "Sending test message…";
+    $("tg-test").disabled = true;
+    const r = await send("TG_TEST");
+    $("tg-status").textContent = r.ok ? "Test sent ✅ check Telegram." : "Test failed: " + (r.error || "?");
+    $("tg-status").className = r.ok ? "status ok" : "status err";
+    $("tg-test").disabled = false;
   });
 
   $("save").addEventListener("click", async () => {
