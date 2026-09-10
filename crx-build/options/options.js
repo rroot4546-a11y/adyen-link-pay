@@ -169,7 +169,9 @@ document.addEventListener("DOMContentLoaded", async () => {
     $("tg-status").textContent = "Sending test message…";
     $("tg-test").disabled = true;
     const r = await send("TG_TEST");
-    $("tg-status").textContent = r.ok ? "Test sent ✅ check Telegram." : "Test failed: " + (r.error || "?");
+    $("tg-status").textContent = r.ok
+      ? "Test sent ✅ — check Telegram."
+      : "Test failed: " + (r.error || "?") + " — did you press Start on the bot? Is the chat id right?";
     $("tg-status").className = r.ok ? "status ok" : "status err";
     $("tg-test").disabled = false;
   });

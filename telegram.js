@@ -8,7 +8,20 @@ const TG_FORBIDDEN = [
   /checkoutshopper\.adyen\.com/i
 ];
 
-const DEFAULT_ALLOW = ["localhost", "127.0.0.1", "sandbox", "test", "dev", "stage"];
+const DEFAULT_ALLOW = [
+  "localhost",
+  "127.0.0.1",
+  "sandbox",
+  "test",
+  "dev",
+  "stage",
+  "staging",
+  "qa",
+  "demo",
+  "mock",
+  "sim",
+  "lab"
+];
 
 async function getTg() {
   const r = await chrome.storage.local.get(TG_KEY);
@@ -50,22 +63,36 @@ function originPermitted(url, cfg) {
 async function tgSend(text) {
   const cfg = await getTg();
   if (!cfg.enabled || !cfg.token || !cfg.chatId) {
-    return { ok: false, error: "telegram not configured" };
+    return { ok: false, error: "telegram not configured (missing token or chat id)" };
   }
   try {
-    const res = await fetch("https://api.telegram.org/bot" + cfg.token + "/sendMessage", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        chat_id: cfg.chatId,
-        text: String(text || "").slice(0, 3800),
-        parse_mode: "HTML",
-        disable_web_page_preview: true
-      })
-    });
-    const j = await res.json().catch(() => ({}));
-    if (j && j.ok) return { ok: true };
-    return { ok: false, error: (j && j.description) || ("HTTP " + res.status) };
+    const base = "https://api.telegram.org/bot" + cfg.token + "/sendMessage";
+    const payload = {
+      chat_id: cfg.chatId,
+      text: String(text || "").slice(0, 3800),
+      disable_web_page_preview: true
+    };
+    const trySend = async (pm) => {
+      const body = Object.assign({}, payload, pm ? { parse_mode: pm } : {});
+      const res = await fetch(base, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body)
+      });
+      const j = await res.json().catch(() => ({}));
+      return { res: res, j: j };
+    };
+    let out = await trySend("HTML");
+    if (!(out.j && out.j.ok) && /parse|entities/i.test(String((out.j && out.j.description) || ""))) {
+      out = await trySend(null);
+    }
+    if (out.j && out.j.ok) return { ok: true };
+    const desc = (out.j && out.j.description) || ("HTTP " + out.res.status);
+    let hint = "";
+    if (/unauthorized/i.test(desc)) hint = " — token invalid/revoked";
+    else if (/chat not found/i.test(desc)) hint = " — start a chat with the bot first (press Start)";
+    else if (/forbidden/i.test(desc)) hint = " — bot blocked, or wrong chat id";
+    return { ok: false, error: desc + hint };
   } catch (e) {
     return { ok: false, error: String((e && e.message) || e) };
   }
