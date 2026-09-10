@@ -1034,6 +1034,7 @@
     }
 
     const csStatus = proxyEl("#nono-cs-status");
+    let csRunning = false;
     function csSet(status, color) {
       if (csStatus) {
         csStatus.textContent = status;
@@ -1042,6 +1043,19 @@
     }
 
     async function runCheckshopperPay(sess, lab) {
+      if (csRunning) {
+        logMsg("Already paying this session — STOP first to relaunch.");
+        return;
+      }
+      csRunning = true;
+      try {
+        await runCheckshopperPayInner(sess, lab);
+      } finally {
+        csRunning = false;
+      }
+    }
+
+    async function runCheckshopperPayInner(sess, lab) {
       const gate = gateSessionUrl(sess.payUrl || sess.rawUrl || "", lab);
       if (!gate.ok) {
         csSet("REFUSED — " + gate.reason, "#ff5d5d");
@@ -1245,6 +1259,35 @@
         logMsg("Session parsed: " + (sess.sessionId || sess.payUrl || "?"));
         runCheckshopperPay(sess, lab);
       });
+    }
+
+    let csAutoTimer = null;
+    const csUrlEl = proxyEl("#nono-cs-url");
+    function csAutoRun() {
+      if (csRunning) return;
+      clearTimeout(csAutoTimer);
+      csAutoTimer = setTimeout(async () => {
+        const txt = (csUrlEl.value || "").trim();
+        if (!txt) return;
+        const lab = await getLab();
+        if (!gateSessionUrl(txt, lab).ok) return;
+        const sess = parseCheckshopper(txt);
+        if (!sess || !sess.payUrl) return;
+        const cfg = await getConfig();
+        if (!(cfg && (cfg.combo || cfg.bin))) {
+          csSet("need BIN/combo", "#ffd166");
+          logMsg("Auto-pay armed — add a BIN or combo above and it pays by itself.");
+          return;
+        }
+        sess.rawUrl = txt;
+        csSet("auto-pay running…", "#00d1b2");
+        logMsg("Session detected — paying automatically, Chief.");
+        runCheckshopperPay(sess, lab);
+      }, 700);
+    }
+    if (csUrlEl) {
+      csUrlEl.addEventListener("input", csAutoRun);
+      csUrlEl.addEventListener("paste", () => setTimeout(csAutoRun, 60));
     }
 
     function startHit() {
