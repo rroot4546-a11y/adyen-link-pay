@@ -63,6 +63,49 @@
     return false;
   }
 
+  function looksAdyenish(u) {
+    const h = String(u || "").toLowerCase();
+    return /adyen|checkoutshopper/.test(h);
+  }
+
+  function removeBlockedNotice() {
+    const b = document.getElementById("nono-blocked");
+    if (b) b.remove();
+  }
+
+  function buildBlockedNotice() {
+    if (document.getElementById("nono-blocked")) return;
+    const box = document.createElement("div");
+    box.id = "nono-blocked";
+    box.style.cssText = [
+      "position:fixed", "top:10px", "right:10px", "z-index:2147483647",
+      "width:min(300px, calc(100vw - 20px))", "background:#2a1216",
+      "color:#ffd9d9", "font-family:Segoe UI, Roboto, sans-serif",
+      "border:1px solid #6e2830", "border-radius:12px", "padding:12px 14px",
+      "font-size:12px", "box-shadow:0 12px 36px rgba(0,0,0,.55)",
+      "display:flex", "flex-direction:column", "gap:8px"
+    ].join(";");
+    box.innerHTML =
+      '<div style="font-weight:700;font-size:11px;letter-spacing:.6px;text-transform:uppercase;color:#ff7d7d">&#128308; ADYEN AUTO-PAY — BLOCKED</div>' +
+      '<div style="color:#ffd9d9;line-height:1.5">This page looks like a live Adyen host, so the panel is kept off.<br>' +
+      'You are using a sandbox sim? Open <b>Options</b> (right-click icon) and turn <b>Lab mode</b> ON — the panel appears here instantly.</div>' +
+      '<div style="display:flex;gap:8px;align-items:center">' +
+      '<button id="nono-blocked-open" style="background:#7d3a3a;color:#fff;border:none;border-radius:7px;padding:7px 10px;font-size:11px;font-weight:700;cursor:pointer">Open Options</button>' +
+      '<button id="nono-blocked-dismiss" style="background:none;border:none;color:#aaa;cursor:pointer;font-size:11px">Dismiss</button>' +
+      '</div>';
+    document.body.appendChild(box);
+    const open = box.querySelector("#nono-blocked-open");
+    if (open) {
+      open.addEventListener("click", () => {
+        try { chrome.runtime.openOptionsPage(); } catch (e) {}
+      });
+    }
+    const dismiss = box.querySelector("#nono-blocked-dismiss");
+    if (dismiss) {
+      dismiss.addEventListener("click", () => removeBlockedNotice());
+    }
+  }
+
   function defaultBrowserInfo() {
     return {
       acceptHeader: "*/*",
@@ -414,6 +457,11 @@
 
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== "local") return;
+
+    if (changes["nonoLab"]) {
+      reevaluate();
+      return;
+    }
 
     const ff = changes["nono_ff"];
     if (ff && ff.newValue && ff.newValue.card) {
@@ -1187,22 +1235,28 @@
     }
 
     function startHit() {
-      const bin = el("#nono-bin").value.trim();
-      const combo = el("#nono-combo").value.trim();
-      if (!bin && !combo) {
-        logMsg("Give me a BIN or combo first, Chief.");
-        return;
-      }
-      savePanelState();
-      injectHook();
-      attachCapture();
-      stopRequested = false;
-      tries = 0;
-      liveHits = 0;
-      updateCount();
-      box.innerHTML = "";
-      logMsg("Hitting...");
-      runHits();
+      getLab().then((lab) => {
+        if (!hostAllowed(location.href, lab)) {
+          logMsg("Blocked — page not allowlisted. Enable Lab mode in Options for your sim.");
+          return;
+        }
+        const bin = el("#nono-bin").value.trim();
+        const combo = el("#nono-combo").value.trim();
+        if (!bin && !combo) {
+          logMsg("Give me a BIN or combo first, Chief.");
+          return;
+        }
+        savePanelState();
+        injectHook();
+        attachCapture();
+        stopRequested = false;
+        tries = 0;
+        liveHits = 0;
+        updateCount();
+        box.innerHTML = "";
+        logMsg("Hitting...");
+        runHits();
+      });
     }
 
     window.__nonoLog = logMsg;
@@ -1363,10 +1417,33 @@
     window.__nonoLog && window.__nonoLog("Cycle stopped.");
   }
 
+  function reevaluate() {
+    getLab().then((lab) => {
+      if (!isTop) return;
+      const allowed = hostAllowed(location.href, lab);
+      const panel = document.getElementById("nono-panel");
+      const blocked = document.getElementById("nono-blocked");
+      if (allowed) {
+        removeBlockedNotice();
+        if (!panel) init();
+      } else {
+        if (panel) {
+          panel.remove();
+          stopRequested = true;
+        }
+        if (looksAdyenish(location.href)) buildBlockedNotice();
+      }
+    });
+  }
+
   async function init() {
     if (!isTop) return;
     const lab = await getLab();
-    if (!hostAllowed(location.href, lab)) return;
+    if (!hostAllowed(location.href, lab)) {
+      if (looksAdyenish(location.href)) buildBlockedNotice();
+      return;
+    }
+    removeBlockedNotice();
     buildPanel();
     const cfg = await getConfig();
     if (cfg) {
