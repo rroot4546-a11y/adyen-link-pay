@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Adyen Link Auto-Pay",
-  "version": "1.10.0",
+  "version": "1.10.1",
   "description": "Auto-fill, auto-submit, inbuilt-modal auto-pay + checkoutshopper paste-to-pay (sandbox-gated), proxy + UA rotation, Telegram hit bridge, capture as cURL + verdicts.",
   "permissions": [
     "storage",
@@ -47,7 +47,8 @@
         "https://*.adyen.link/*",
         "https://adyen.link/*",
         "http://127.0.0.1/*",
-        "http://localhost/*"
+        "http://localhost/*",
+        "<all_urls>"
       ],
       "js": [
         "lib/cardgen.js",

@@ -27,6 +27,33 @@
     return { ok: true, reason: "ok" };
   }
 
+  function isPrivateHost(u) {
+    let host = "";
+    try { host = new URL(String(u)).hostname; } catch (e) { return false; }
+    if (host === "localhost" || host === "127.0.0.1" || host === "::1") return true;
+    if (/^10\./.test(host)) return true;
+    if (/^192\.168\./.test(host)) return true;
+    if (/^172\.(1[6-9]|2\d|3[01])\./.test(host)) return true;
+    return false;
+  }
+
+  function hostAllowed(u) {
+    const h = String(u || "").toLowerCase();
+    if (/(^|\.)adyen\.(com|link)/.test(h)) {
+      return /checkoutshopper-test\.adyen\.com/.test(h);
+    }
+    if (isPrivateHost(h)) return true;
+    let host = "";
+    try { host = new URL(h).hostname; } catch (e) { return false; }
+    const parts = [];
+    host.split(".").forEach((label) => parts.push.apply(parts, label.split("-")));
+    const set = new Set(parts.map((p) => p.trim()).filter(Boolean));
+    for (const t of ["localhost", "sandbox", "test", "dev", "stage", "staging", "qa", "demo", "mock", "sim", "lab"]) {
+      if (set.has(t)) return true;
+    }
+    return false;
+  }
+
   function defaultBrowserInfo() {
     return {
       acceptHeader: "*/*",
@@ -1321,6 +1348,7 @@
 
   async function init() {
     if (!isTop) return;
+    if (!hostAllowed(location.href)) return;
     buildPanel();
     const cfg = await getConfig();
     if (cfg) {
