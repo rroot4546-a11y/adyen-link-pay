@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Adyen Link Auto-Pay",
-  "version": "1.10.5",
-  "description": "Auto-fill, auto-submit, inbuilt-modal auto-pay + checkoutshopper paste-to-pay — pasting a session auto-starts payment (single-run guard), one-click Lab mode, proxy + UA rotation, Telegram hit bridge, capture as cURL + verdicts.",
+  "version": "1.10.6",
+  "description": "Auto-fill, auto-submit, inbuilt modal auto-pay + checkoutshopper paste-to-pay — panel appears on ANY page with embedded Adyen (multi-payment-method shops), actions stay gated to sandbox/Lab, proxy + UA rotation, Telegram hit bridge.",
   "permissions": [
     "storage",
     "activeTab",

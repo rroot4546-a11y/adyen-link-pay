@@ -15,6 +15,8 @@
   let pendingCard = null;
   let capturedResps = [];
   let modalStarted = false;
+  let hostOk = false;
+  let autoScheduled = false;
 
   const VERSION = "1.10";
 
@@ -538,6 +540,7 @@
     }
     if (!modalStarted && adyenUISignal()) {
       modalStarted = true;
+      if (!document.getElementById("nono-panel")) init();
       getConfig().then((cfg) => {
         if (cfg && cfg.autoOnLoad && !running && !stopRequested) {
           const b = document.getElementById("nono-start");
@@ -1291,9 +1294,13 @@
     }
 
     function startHit() {
+      if (running) {
+        logMsg("Already running — hit STOP first.");
+        return;
+      }
       getLab().then((lab) => {
         if (!hostAllowed(location.href, lab)) {
-          logMsg("Blocked — page not allowlisted. Enable Lab mode in Options for your sim.");
+          logMsg("Blocked — page not allowlisted. Enable Lab mode to unlock.");
           return;
         }
         const bin = el("#nono-bin").value.trim();
@@ -1319,6 +1326,9 @@
     window.__nonoUpdate = updateCount;
     window.__nonoResult = logResult;
     window.__nonoRestore = restore;
+    if (!hostOk) {
+      window.__nonoLog("Host not sandbox-listed — payment actions locked. Enable Lab mode (one click) to unlock your sim.");
+    }
   }
 
   function parseCombo(combo) {
@@ -1476,10 +1486,10 @@
   function reevaluate() {
     getLab().then((lab) => {
       if (!isTop) return;
-      const allowed = hostAllowed(location.href, lab);
+      hostOk = hostAllowed(location.href, lab);
       const panel = document.getElementById("nono-panel");
       const blocked = document.getElementById("nono-blocked");
-      if (allowed) {
+      if (hostOk || adyenUISignal()) {
         removeBlockedNotice();
         if (!panel) init();
       } else {
@@ -1495,7 +1505,8 @@
   async function init() {
     if (!isTop) return;
     const lab = await getLab();
-    if (!hostAllowed(location.href, lab)) {
+    hostOk = hostAllowed(location.href, lab);
+    if (!hostOk && !adyenUISignal()) {
       if (looksAdyenish(location.href)) buildBlockedNotice();
       return;
     }
@@ -1512,7 +1523,8 @@
           else e.value = vals[i];
         }
       });
-      if (cfg.enabled && cfg.autoOnLoad) {
+      if (cfg.enabled && cfg.autoOnLoad && !autoScheduled) {
+        autoScheduled = true;
         setTimeout(() => {
           const b = document.getElementById("nono-start");
           if (b) b.click();
