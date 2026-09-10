@@ -318,6 +318,41 @@ if (msg && actionIsTG(msg)) {
     sendResponse({ captured });
     return true;
   }
+  if (msg && msg.action === 'GET_SESSION') {
+    const id = String(msg.sessionId || "");
+    const want = String(msg.url || "").split("?")[0];
+    const pick = (u) => {
+      try {
+        u = String(u || "");
+        if (u.charAt(0) === '"') u = u.slice(1);
+        if (want && u.split("?")[0] !== want && !u.includes(want)) return false;
+        if (id && !u.includes(id)) return false;
+      } catch (e) {}
+      return true;
+    };
+    let sessionData = "";
+    let clientKey = "";
+    let found = false;
+    for (const c of captured) {
+      if (!c.body || !pick(c.url)) continue;
+      try {
+        const j = JSON.parse(c.body);
+        if (j && (j.sessionData || j.clientKey)) { sessionData = j.sessionData || sessionData; clientKey = j.clientKey || clientKey; found = true; break; }
+      } catch (e) {}
+    }
+    if (!sessionData) {
+      for (const r of capturedResponses) {
+        if (!pick(r.url)) continue;
+        try {
+          const j = JSON.parse(r.body);
+          const sd = (j && (j.sessionData || (j.session && j.session.sessionData))) || "";
+          if (sd) { sessionData = sd; found = true; break; }
+        } catch (e) {}
+      }
+    }
+    sendResponse({ sessionData, clientKey, found });
+    return true;
+  }
   if (msg && msg.type === 'CLEAR_CAPTURED') {
     captured = [];
     chrome.action.setBadgeText({ text: '' });
