@@ -555,7 +555,7 @@
         <div style="display:flex;align-items:center;gap:8px">
           <span style="font-size:16px">&#9889;</span>
           <b style="font-size:13px;letter-spacing:.5px">ADYEN AUTO-PAY</b>
-          <span id="nono-ver" style="font-size:9px;background:#00110d33;color:#00110d;padding:2px 6px;border-radius:8px">1.6.0</span>
+          <span id="nono-ver" style="font-size:9px;background:#00110d33;color:#00110d;padding:2px 6px;border-radius:8px">1.7.0</span>
         </div>
         <div style="display:flex;gap:6px">
           <button id="nono-dbg" title="Debug DOM" style="background:#00110d22;border:none;color:#00110d;cursor:pointer;width:22px;height:22px;border-radius:6px;font-size:10px;line-height:1;font-weight:700">DBG</button>
@@ -611,6 +611,12 @@
           <button id="nono-proxy-next" style="padding:6px 8px;background:#23303c;color:#e6e6e6;border:none;border-radius:7px;font-size:10px;font-weight:700;cursor:pointer">NEXT</button>
           <button id="nono-proxy-test" style="padding:6px 8px;background:#23303c;color:#e6e6e6;border:none;border-radius:7px;font-size:10px;font-weight:700;cursor:pointer">TEST</button>
           <button id="nono-proxy-off" style="padding:6px 8px;background:#3a2230;color:#ff7d7d;border:none;border-radius:7px;font-size:10px;font-weight:700;cursor:pointer">OFF</button>
+        </div>
+
+        <div id="nono-ua-row" style="display:flex;gap:6px;align-items:center;margin-top:4px">
+          <span id="nono-ua-label" style="flex:1;font-size:10px;color:#8fa3b5;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">UA: OFF</span>
+          <button id="nono-ua-next" style="padding:6px 8px;background:#23303c;color:#e6e6e6;border:none;border-radius:7px;font-size:10px;font-weight:700;cursor:pointer">NEXT</button>
+          <button id="nono-ua-toggle" style="padding:6px 8px;background:#23303c;color:#ffd166;border:none;border-radius:7px;font-size:10px;font-weight:700;cursor:pointer">ON/OFF</button>
         </div>
 
         <div style="display:flex;justify-content:space-between;font-size:11px;margin-top:2px">
@@ -785,6 +791,24 @@
       refreshProxyStatus();
     }
 
+    if (proxyEl("#nono-ua-next")) {
+      let uaOn = false;
+      proxyEl("#nono-ua-next").addEventListener("click", async () => {
+        const r = await proxyMsg({ action: "UA_NEXT" });
+        logMsg(r && r.ok ? "UA -> " + r.label : "UA rotate failed: " + (r && r.error));
+        proxyEl("#nono-ua-label").textContent = "UA: " + (r && r.ok ? r.label : "OFF");
+        uaOn = true;
+        proxyEl("#nono-ua-toggle").style.background = "#22303a";
+      });
+      proxyEl("#nono-ua-toggle").addEventListener("click", async () => {
+        uaOn = !uaOn;
+        await proxyMsg({ action: "UA_SET_STATE", enabled: uaOn, index: 0 });
+        proxyEl("#nono-ua-label").textContent = uaOn ? "UA: rotation ON" : "UA: OFF";
+        proxyEl("#nono-ua-toggle").style.background = uaOn ? "#22303a" : "#3a3022";
+        logMsg(uaOn ? "UA rotation enabled." : "UA rotation disabled.");
+      });
+    }
+
     function startHit() {
       const bin = el("#nono-bin").value.trim();
       const combo = el("#nono-combo").value.trim();
@@ -842,6 +866,11 @@
       const pr = await proxyMsg({ action: "PROXY_BEFORE_HIT" });
       if (pr && pr.proxy) {
         window.__nonoLog && window.__nonoLog("Proxy: " + pr.proxy.label);
+      }
+
+      const ua = await proxyMsg({ action: "UA_NEXT" });
+      if (ua && ua.label) {
+        window.__nonoLog && window.__nonoLog("UA: " + ua.label);
       }
 
       let card;

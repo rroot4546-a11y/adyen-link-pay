@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Checkout</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: #f4f5f8; color: #00112c; font-family: 'Segoe UI', Roboto, sans-serif;
+    padding: 32px 16px; display: flex; flex-direction: column; align-items: center;
+  }
+  .wrap { width: 100%; max-width: 480px; }
+  h1 { font-size: 18px; margin-bottom: 4px; }
+  .merchant { color: #5b6770; font-size: 12px; margin-bottom: 20px; }
+  .method {
+    background: #fff; border: 1px solid #d4d9e0; border-radius: 8px; margin-bottom: 12px;
+    overflow: hidden; box-shadow: 0 1px 2px rgba(0,0,0,.04);
+  }
+  .method-header {
+    display: flex; align-items: center; padding: 14px 16px; cursor: pointer; gap: 10px;
+  }
+  .method-header .radio {
+    width: 18px; height: 18px; border-radius: 50%; border: 2px solid #99a3ad;
+    flex: 0 0 auto;
+  }
+  .method.open .radio { border-color: #0abf53; }
+  .method.open .radio:after {
+    content: ""; display: block; width: 10px; height: 10px; border-radius: 50%;
+    background: #0abf53; margin: 2px;
+  }
+  .method.open .method-body { display: block; }
+  .method-body { display: none; padding: 0 16px 16px; }
+  .field { margin-bottom: 12px; }
+  .field label { font-size: 12px; font-weight: 600; color: #00112c; display: block; margin-bottom: 5px; }
+  .field input {
+    width: 100%; border: 1px solid #b9c1ca; border-radius: 6px; padding: 11px 12px;
+    font-size: 14px; outline: none; background: #fff; color: #00112c;
+  }
+  .field input:focus { border-color: #0abf53; box-shadow: 0 0 0 2px rgba(10,191,83,.15); }
+  .row2 { display: flex; gap: 12px; }
+  .row2 .field { flex: 1; }
+  .pay-btn {
+    width: 100%; background: #0abf53; color: #fff; border: 0; border-radius: 6px;
+    padding: 14px; font-size: 15px; font-weight: 700; cursor: pointer; margin-top: 6px;
+  }
+  .pay-btn:disabled { opacity: .6; cursor: not-allowed; }
+  .pay-btn:not(:disabled):hover { background: #0aa948; }
+  .resolve {
+    margin-top: 14px; font-size: 13px; line-height: 1.6; display: none;
+    padding: 10px 12px; border-radius: 6px;
+  }
+  .resolve.show { display: block; }
+  .resolve.good { background: #e7f9ee; color: #08712f; border: 1px solid #a4e3bc; }
+  .resolve.bad { background: #fdeaea; color: #a82b2b; border: 1px solid #f2b5b5; }
+  .footer { color: #99a3ad; font-size: 11px; margin-top: 18px; text-align: center; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Adyen Link</h1>
+  <div class="merchant">Demo Shop — amount <span id="amount">€25.00</span></div>
+
+  <div class="method open" id="m-card">
+    <div class="method-header">
+      <div class="radio"></div>
+      <span>Credit or debit card</span>
+    </div>
+    <div class="method-body" id="card-body">
+      <div class="field">
+        <label for="cardNumber">Card number</label>
+        <input id="cardNumber" name="cardNumber" autocomplete="cc-number" data-fieldtype="encryptedCardNumber"
+               placeholder="1234 5678 9012 3456" inputmode="numeric">
+      </div>
+      <div class="row2">
+        <div class="field">
+          <label for="expiryMonth">Expiry month</label>
+          <input id="expiryMonth" name="expiryMonth" autocomplete="cc-exp-month" data-fieldtype="encryptedExpiryMonth"
+                 placeholder="MM" maxlength="2" inputmode="numeric">
+        </div>
+        <div class="field">
+          <label for="expiryYear">Expiry year</label>
+          <input id="expiryYear" name="expiryYear" autocomplete="cc-exp-year" data-fieldtype="encryptedExpiryYear"
+                 placeholder="YY" maxlength="2" inputmode="numeric">
+        </div>
+        <div class="field">
+          <label for="securityCode">Security code</label>
+          <input id="securityCode" name="securityCode" autocomplete="cc-csc" data-fieldtype="encryptedSecurityCode"
+                 placeholder="CVC" maxlength="4" inputmode="numeric">
+        </div>
+      </div>
+      <button id="pay-btn" class="adyen-checkout__button pay-btn" type="button">Pay</button>
+      <div class="resolve" id="resolve"></div>
+    </div>
+  </div>
+
+  <div class="footer">SIMULATED CHECKOUT — adyen-sim lab · no real payment is processed</div>
+</div>
+
+<script>
+  // Drop-in style processing delay, so refill/mutation logic in automation has something to chew on.
+  const amount = new URLSearchParams(location.search).get('amount') || '25.00';
+  const currency = new URLSearchParams(location.search).get('currency') || 'EUR';
+  document.getElementById('amount').textContent = currency + ' ' + amount;
+
+  const payBtn = document.getElementById('pay-btn');
+  const resolveBox = document.getElementById('resolve');
+  const methodHeader = document.querySelector('.method-header');
+
+  methodHeader.addEventListener('click', (e) => {
+    if (e.target.closest('button')) return;
+    document.querySelector('.method').classList.toggle('open');
+  });
+
+  function luhnOK(num) {
+    const d = String(num).replace(/\D/g, '');
+    let sum = 0, alt = false;
+    for (let i = d.length - 1; i >= 0; i--) {
+      let n = +d[i];
+      if (alt) { n *= 2; if (n > 9) n -= 9; }
+      sum += n;
+      alt = !alt;
+    }
+    return sum % 10 === 0;
+  }
+
+  payBtn.addEventListener('click', () => {
+    const number = document.getElementById('cardNumber').value.replace(/\s/g, '');
+    const expiryMonth = String(document.getElementById('expiryMonth').value || '').padStart(2, '0');
+    const expiryYear = document.getElementById('expiryYear').value;
+    const cvc = document.getElementById('securityCode').value;
+    if (!luhnOK(number)) {
+      showResult('bad', 'refused: Invalid card number');
+      return;
+    }
+    payBtn.disabled = true;
+    showResult('', 'Processing…');
+    fetch('/checkoutshopper/v1/payments', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        paymentMethod: { type: 'scheme', number: number, expiryMonth: expiryMonth, expiryYear: expiryYear, cvc: cvc, holderName: 'JOHN DOE' },
+        amount: { value: Math.round(parseFloat(amount) * 100), currency: currency }
+      })
+    })
+    .then(r => r.json())
+    .then(res => {
+      if (res.action && res.action.type === 'threeDS2') {
+        location.href = '/challenge?psp=' + encodeURIComponent(res.pspReference || '');
+        return;
+      }
+      showResult(
+        res.resultCode === 'Authorised' ? 'good' : 'bad',
+        res.resultCode + (res.refusalReason ? ': ' + res.refusalReason : '') + ' · ' + (res.pspReference || '')
+      );
+      payBtn.disabled = false;
+    })
+    .catch(() => { showResult('bad', 'Simulator error'); payBtn.disabled = false; });
+  });
+
+  function showResult(kind, text) {
+    resolveBox.className = 'resolve show' + (kind ? ' ' + kind : '');
+    resolveBox.textContent = text;
+  }
+</script>
+</body>
+</html>

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Adyen Link Auto-Pay",
-  "version": "1.6.0",
+  "version": "1.7.0",
   "description": "Auto-fill, auto-submit, proxy rotation and capture checkoutshopper payment requests as cURL + response verdicts.",
   "permissions": [
     "storage",
@@ -46,7 +46,10 @@
         "https://*.adyen.link/*",
         "https://adyen.link/*"
       ],
-      "js": ["lib/cardgen.js", "content.js"],
+      "js": [
+        "lib/cardgen.js",
+        "content.js"
+      ],
       "run_at": "document_idle"
     }
   ]

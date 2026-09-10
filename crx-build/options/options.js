@@ -62,6 +62,24 @@ async function refresh() {
     renderStatus(r.state, r.list || []);
     $("proxies").value = (r.list || []).map((p) => p.raw).join("\n");
   }
+  const ua = await send("UA_GET_STATE");
+  if (ua.state) {
+    $("ua-enabled").checked = !!ua.state.enabled;
+    $("uas").value = (ua.list || []).join("\n");
+    setUAStatus(ua.state, ua.list || []);
+  }
+}
+
+function setUAStatus(state, list) {
+  const box = $("ua-status");
+  if (!state.enabled || !list.length) {
+    box.className = "status";
+    box.textContent = "Rotation OFF. Enable to swap UA before each payment attempt.";
+    return;
+  }
+  const idx = state.index % list.length;
+  box.className = "status ok";
+  box.textContent = "Active #" + (idx + 1) + "/" + list.length + "\n" + list[idx];
 }
 
 document.addEventListener("DOMContentLoaded", async () => {
@@ -74,6 +92,51 @@ document.addEventListener("DOMContentLoaded", async () => {
       const box = $("live-status");
       box.textContent = "Rotated to " + msg.proxy + " (" + msg.reason + ")";
       box.className = "status";
+    }
+  });
+
+  $("ua-save").addEventListener("click", async () => {
+    const r = await send("UA_SET_LIST", { text: $("uas").value });
+    $("ua-status").textContent = "Saved " + (r.list ? r.list.length : 0) + " User-Agents.";
+    $("ua-status").className = "status ok";
+    const ua = await send("UA_GET_STATE");
+    setUAStatus(ua.state, r.list || ua.list || []);
+  });
+
+  $("ua-enabled").addEventListener("change", async () => {
+    const st = (await send("UA_GET_STATE")).state || {};
+    const r = await send("UA_SET_STATE", { enabled: $("ua-enabled").checked, index: st.index || 0 });
+    const list = (await send("UA_GET_STATE")).list || [];
+    setUAStatus(r.state || { enabled: $("ua-enabled").checked, index: 0 }, list);
+  });
+
+  $("ua-apply").addEventListener("click", async () => {
+    const st = (await send("UA_GET_STATE")).state || {};
+    const list = (await send("UA_GET_STATE")).list || [];
+    const idx = st.index || 0;
+    const r = await send("UA_APPLY_INDEX", { index: idx });
+    if (r.ok) {
+      $("ua-status").textContent = "Applied #" + (idx + 1) + "\n" + (r.label || "");
+      $("ua-status").className = "status ok";
+    } else {
+      $("ua-status").textContent = "Apply failed: " + (r.error || "?");
+      $("ua-status").className = "status err";
+    }
+    setUAStatus({ enabled: true, index: idx }, list);
+  });
+
+  $("ua-next").addEventListener("click", async () => {
+    const r = await send("UA_NEXT");
+    if (r.ok) {
+      $("ua-status").textContent = "Rotated to " + r.label;
+      $("ua-status").className = "status ok";
+      $("ua-enabled").checked = true;
+    } else if (r.skipped) {
+      $("ua-status").textContent = "Rotation is OFF — enable it first.";
+      $("ua-status").className = "status err";
+    } else {
+      $("ua-status").textContent = "Rotate failed: " + (r.error || "?");
+      $("ua-status").className = "status err";
     }
   });
 

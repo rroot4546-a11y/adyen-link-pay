@@ -135,6 +135,24 @@
     </div>
 
     <div class="card">
+      <h3>User-Agent rotation</h3>
+      <div class="row">
+        <label class="switch">
+          <input type="checkbox" id="ua-enabled">
+          <span class="slider"></span>
+        </label>
+        <span>Rotate User-Agent before every payment attempt</span>
+      </div>
+      <textarea id="uas" spellcheck="false" placeholder="One User-Agent string per line…"></textarea>
+      <div class="row" style="margin-top:12px">
+        <button id="ua-save" class="btn primary">Save UAs</button>
+        <button id="ua-apply" class="btn">Apply</button>
+        <button id="ua-next" class="btn">Next</button>
+      </div>
+      <div id="ua-status" class="status">No UA applied yet. Rotation goes through the page's debugger session.</div>
+    </div>
+
+    <div class="card">
       <h3>Proxy list</h3>
       <textarea id="proxies" spellcheck="false" placeholder="One proxy per line (HTTP/HTTPS/SOCKS4/SOCKS5):&#10;&#10;http://user:pass@1.2.3.4:8080&#10;1.2.3.4:3128&#10;socks5://1.2.3.4:1080&#10;https://1.2.3.4:443"></textarea>
       <div class="row" style="margin-top:12px">

@@ -1,0 +1,27 @@
+{
+  "port": 8443,
+  "host": "127.0.0.1",
+  "processingDelayMs": 900,
+  "defaultAuthorised": true,
+  "maxAttemptsKeep": 500,
+  "verdicts": {
+    "authorisedPrefixes": ["4111", "424242", "491761", "555555", "3714496"],
+    "refusedPrefixes": {
+      "4000": {
+        "reason": "Expired Card",
+        "refusalCode": "CARDEXPIRED"
+      },
+      "5105105105105100": {
+        "reason": "Insufficient funds",
+        "refusalCode": "06"
+      },
+      "4001": {
+        "reason": "Do not honour",
+        "refusalCode": "05"
+      }
+    },
+    "challengePrefixes": ["4002", "4003", "486669"],
+    "invalidReason": "Invalid card number",
+    "invalidCode": "CARDINVALID"
+  }
+}

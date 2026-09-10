@@ -16,6 +16,20 @@ const pending = new Map();
 const dbgPending = new Map();
 let dbgTabId = -1;
 
+const UA_STATE_KEY = "nonoUAState";
+const DEFAULT_UAS = [
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36",
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36",
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/127.0.0.0 Safari/537.36",
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/129.0.0.0 Safari/537.36",
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36",
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:132.0) Gecko/20100101 Firefox/132.0",
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:131.0) Gecko/20100101 Firefox/131.0",
+  "Mozilla/5.0 (X11; Linux x86_64; rv:130.0) Gecko/20100101 Firefox/130.0"
+];
+
 const RESP_RE = /checkoutshopper.*\/(payments|sessions|submit|result)(\?|$)/;
 
 chrome.webRequest.onBeforeRequest.addListener(
@@ -142,6 +156,12 @@ function attachDebugger(tabId) {
     dbgTabId = tabId;
     dbgPending.clear();
     return chrome.debugger.sendCommand({ tabId: tabId }, "Network.enable");
+  }).then(async () => {
+    const state = await getUAState();
+    if (state.enabled) {
+      const list = await getUAList();
+      if (list[state.index]) await applyUAOverride(tabId, list[state.index]);
+    }
   });
 }
 
@@ -205,6 +225,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg && msg.action === 'DBG_DETACH') {
     detachDebugger();
     sendResponse({ ok: true });
+    return true;
+  }
+  if (msg && /^UA_/.test(msg.action || "")) {
+    const tabId = sender && sender.tab && sender.tab.id;
+    handleUAMessage(Object.assign({}, msg, { tabId: msg.tabId || tabId }), sendResponse);
     return true;
   }
   if (msg && /^PROXY_/.test(msg.action || "")) {
@@ -493,6 +518,97 @@ function dqLD(str) {
 function truncateUrl(url, max) {
   max = max || 60;
   return url.length > max ? url.slice(0, max) + '…' : url;
+}
+
+async function getUAState() {
+  const r = await chrome.storage.local.get(UA_STATE_KEY);
+  return r[UA_STATE_KEY] || { enabled: false, index: 0 };
+}
+
+async function setUAState(state) {
+  await chrome.storage.local.set({ [UA_STATE_KEY]: state });
+}
+
+async function getUAList() {
+  const r = await chrome.storage.local.get("nonoUAList");
+  const list = Array.isArray(r.nonoUAList) && r.nonoUAList.length ? r.nonoUAList : DEFAULT_UAS.slice();
+  return list;
+}
+
+async function applyUAOverride(tabId, ua) {
+  if (tabId == null) return { ok: false, error: "no tab" };
+  try {
+    await chrome.debugger.sendCommand({ tabId: tabId }, "Network.setUserAgentOverride", {
+      userAgent: ua,
+      platform: /Macintosh/.test(ua) ? "MacIntel" : /Firefox/.test(ua) ? "Linux" : "Win32"
+    });
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: String((e && e.message) || e) };
+  }
+}
+
+async function handleUAMessage(msg, sendResponse) {
+  try {
+    switch (msg.action) {
+      case "UA_GET_STATE": {
+        sendResponse({ state: await getUAState(), list: await getUAList() });
+        return;
+      }
+      case "UA_SET_LIST": {
+        const list = (msg.text || "").split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
+        await chrome.storage.local.set({ nonoUAList: list });
+        sendResponse({ ok: true, list: list });
+        return;
+      }
+      case "UA_SET_STATE": {
+        const state = { enabled: !!msg.enabled, index: typeof msg.index === "number" ? msg.index : 0 };
+        await setUAState(state);
+        if (state.enabled) {
+          const list = await getUAList();
+          if (state.index >= list.length) state.index = 0;
+          const ua = list[state.index];
+          await setUAState(state);
+          await applyUAOverride(msg.tabId, ua);
+        }
+        sendResponse({ ok: true, state: state });
+        return;
+      }
+      case "UA_NEXT": {
+        const state = await getUAState();
+        if (!state.enabled) { sendResponse({ ok: false, label: "", skipped: true }); return; }
+        const list = await getUAList();
+        if (!list.length) { sendResponse({ ok: false, label: "", error: "no uas" }); return; }
+        let idx = state.index + 1;
+        if (idx >= list.length) idx = 0;
+        state.index = idx;
+        state.enabled = true;
+        await setUAState(state);
+        const ua = list[idx];
+        const r = await applyUAOverride(msg.tabId || dbgTabId, ua);
+        const short = ua.replace(/^Mozilla\/5\.0\s*\([^)]*\)\s*/, "").split("/")[0] || "UA";
+        sendResponse({ ok: r.ok, index: idx, total: list.length, label: short + " #" + (idx + 1), error: r.error });
+        return;
+      }
+      case "UA_APPLY_INDEX": {
+        const state = await getUAState();
+        const list = await getUAList();
+        let idx = typeof msg.index === "number" ? msg.index : state.index;
+        if (idx >= list.length) idx = 0;
+        state.index = idx;
+        state.enabled = true;
+        await setUAState(state);
+        const ua = list[idx];
+        const r = await applyUAOverride(msg.tabId || dbgTabId, ua);
+        sendResponse({ ok: r.ok, index: idx, label: ua, error: r.error });
+        return;
+      }
+      default:
+        sendResponse({ ok: false, error: "unknown ua action" });
+    }
+  } catch (e) {
+    sendResponse({ ok: false, error: String((e && e.message) || e) });
+  }
 }
 
 async function handleProxyMessage(msg, sendResponse) {
