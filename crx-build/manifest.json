@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Adyen Link Auto-Pay",
-  "version": "1.8.2",
+  "version": "1.8.3",
   "description": "Auto-fill, auto-submit, proxy + UA rotation, sandbox-gated Telegram hit bridge, capture as cURL + verdicts.",
   "permissions": [
     "storage",
