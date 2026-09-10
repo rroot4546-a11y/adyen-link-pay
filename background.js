@@ -1,5 +1,7 @@
 "use strict";
 
+importScripts("proxy.js");
+
 const ADYEN_PATTERNS = [
   '*://checkoutshopper-live.adyen.com/checkoutshopper/v1/*',
   '*://checkoutshopper-test.adyen.com/checkoutshopper/v1/*',
@@ -203,6 +205,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg && msg.action === 'DBG_DETACH') {
     detachDebugger();
     sendResponse({ ok: true });
+    return true;
+  }
+  if (msg && /^PROXY_/.test(msg.action || "")) {
+    handleProxyMessage(msg, sendResponse);
     return true;
   }
   if (msg && msg.type === 'GET_RESPONSES') {
@@ -487,4 +493,89 @@ function dqLD(str) {
 function truncateUrl(url, max) {
   max = max || 60;
   return url.length > max ? url.slice(0, max) + '…' : url;
+}
+
+async function handleProxyMessage(msg, sendResponse) {
+  try {
+    switch (msg.action) {
+      case 'PROXY_GET_STATE': {
+        const state = await loadState();
+        const list = await loadList();
+        sendResponse({ state: state, list: list });
+        return;
+      }
+      case 'PROXY_PARSE_LIST': {
+        const list = parseProxyText(msg.text || '');
+        await saveList(list);
+        const state = await loadState();
+        sendResponse({ list: list, state: state });
+        return;
+      }
+      case 'PROXY_SET_STATE': {
+        const list = await loadList();
+        let index = typeof msg.index === 'number' ? msg.index : 0;
+        if (index >= list.length && list.length) index = 0;
+        await saveState({
+          enabled: !!msg.enabled,
+          mode: msg.mode || 'single',
+          index: index,
+          exitIP: msg.exitIP || '',
+          lastError: ''
+        });
+        const r = await applyCurrent();
+        sendResponse(Object.assign({ proxy: r.proxy ? r.proxy : null }, r));
+        return;
+      }
+      case 'PROXY_ROTATE': {
+        const r = await rotate();
+        sendResponse(Object.assign({ proxy: r.proxy ? r.proxy : null }, r));
+        return;
+      }
+      case 'PROXY_APPLY_INDEX': {
+        const r = await rotate(msg.index);
+        sendResponse(Object.assign({ proxy: r.proxy ? r.proxy : null }, r));
+        return;
+      }
+      case 'PROXY_OFF': {
+        const state = await loadState();
+        state.enabled = false;
+        state.exitIP = '';
+        await saveState(state);
+        const r = await clearProxy();
+        sendResponse({ ok: r.ok, proxy: null, error: r.error });
+        return;
+      }
+      case 'PROXY_STATUS': {
+        const state = await loadState();
+        const list = await loadList();
+        const p = state.enabled && list[state.index] ? list[state.index] : null;
+        sendResponse({ enabled: state.enabled, proxy: p, label: p ? p.label : 'OFF' });
+        return;
+      }
+      case 'PROXY_BEFORE_HIT': {
+        const state = await loadState();
+        if (!state.enabled) {
+          sendResponse({ proxy: null, ok: false });
+          return;
+        }
+        const r = state.mode === 'rotate' ? await rotate() : await applyCurrent();
+        sendResponse({ proxy: r.proxy ? r.proxy : null, ok: r.ok, error: r.error });
+        return;
+      }
+      case 'PROXY_TEST': {
+        const r = await testProxy(typeof msg.index === 'number' ? msg.index : 0);
+        sendResponse(r);
+        return;
+      }
+      case 'PROXY_TEST_ALL': {
+        sendResponse({ running: true });
+        testAll();
+        return;
+      }
+      default:
+        sendResponse({ error: 'unknown proxy action' });
+    }
+  } catch (e) {
+    sendResponse({ ok: false, error: String((e && e.message) || e) });
+  }
 }

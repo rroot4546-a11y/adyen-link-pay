@@ -153,18 +153,31 @@
       font-size: 10px;
       color: #7fd4c2;
     }
+    #proxy-status {
+      padding: 7px 14px;
+      background: #0a0d12;
+      border-bottom: 1px solid #1a2430;
+      font-size: 11px;
+      color: #8fa3b5;
+    }
+    #proxy-status b { color: #00d1b2; }
   </style>
 </head>
 <body>
   <div class="topbar">
     <b>ADYEN SESSION COPIER</b>
-    <button id="clear">Clear</button>
+    <div style="display:flex;gap:6px">
+      <button id="proxy" title="Proxy settings">&#9889; PROXY</button>
+      <button id="clear">Clear</button>
+    </div>
   </div>
 
   <div class="status">
     <span>Requests captured</span>
     <span id="count">0</span>
   </div>
+
+  <div id="proxy-status" style="display:none"></div>
 
   <div class="tipbar">
     Capture picks up checkoutshopper sessions requests. Tap a row to expand, then copy the cURL.

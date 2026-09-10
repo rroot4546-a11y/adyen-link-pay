@@ -30,6 +30,26 @@
     } catch (e) {}
   }
 
+  function proxyMsg(payload) {
+    return new Promise((resolve) => {
+      try {
+        chrome.runtime.sendMessage(payload, (res) => {
+          if (chrome.runtime.lastError || !res) resolve({ ok: false, proxy: null });
+          else resolve(res);
+        });
+      } catch (e) {
+        resolve({ ok: false, proxy: null });
+      }
+    });
+  }
+
+  async function refreshProxyStatus() {
+    const s = await proxyMsg({ action: "PROXY_STATUS" });
+    const el = document.getElementById("nono-proxy-label");
+    if (!el) return;
+    el.textContent = "Proxy: " + (s && s.label ? s.label : "OFF");
+  }
+
   document.addEventListener("nonnho-capture", (e) => {
     const d = e.detail || {};
     if (!d || !d.body) return;
@@ -535,7 +555,7 @@
         <div style="display:flex;align-items:center;gap:8px">
           <span style="font-size:16px">&#9889;</span>
           <b style="font-size:13px;letter-spacing:.5px">ADYEN AUTO-PAY</b>
-          <span id="nono-ver" style="font-size:9px;background:#00110d33;color:#00110d;padding:2px 6px;border-radius:8px">1.5.1</span>
+          <span id="nono-ver" style="font-size:9px;background:#00110d33;color:#00110d;padding:2px 6px;border-radius:8px">1.6.0</span>
         </div>
         <div style="display:flex;gap:6px">
           <button id="nono-dbg" title="Debug DOM" style="background:#00110d22;border:none;color:#00110d;cursor:pointer;width:22px;height:22px;border-radius:6px;font-size:10px;line-height:1;font-weight:700">DBG</button>
@@ -584,6 +604,13 @@
         <div style="display:flex;gap:6px;margin-top:4px">
           <button id="nono-start" style="flex:2;padding:11px;background:linear-gradient(135deg,#00d1b2,#00a88c);color:#00110d;border:none;border-radius:9px;font-weight:700;font-size:13px;cursor:pointer">&#9654; START HIT</button>
           <button id="nono-stop" style="flex:1;padding:11px;background:#23303c;color:#e6e6e6;border:none;border-radius:9px;font-weight:600;font-size:12px;cursor:pointer">STOP</button>
+        </div>
+
+        <div id="nono-proxy-row" style="display:flex;gap:6px;align-items:center;margin-top:4px">
+          <span id="nono-proxy-label" style="flex:1;font-size:10px;color:#8fa3b5;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">Proxy: OFF</span>
+          <button id="nono-proxy-next" style="padding:6px 8px;background:#23303c;color:#e6e6e6;border:none;border-radius:7px;font-size:10px;font-weight:700;cursor:pointer">NEXT</button>
+          <button id="nono-proxy-test" style="padding:6px 8px;background:#23303c;color:#e6e6e6;border:none;border-radius:7px;font-size:10px;font-weight:700;cursor:pointer">TEST</button>
+          <button id="nono-proxy-off" style="padding:6px 8px;background:#3a2230;color:#ff7d7d;border:none;border-radius:7px;font-size:10px;font-weight:700;cursor:pointer">OFF</button>
         </div>
 
         <div style="display:flex;justify-content:space-between;font-size:11px;margin-top:2px">
@@ -737,6 +764,27 @@
       logMsg("Stopped by Chief.");
     });
 
+    const proxyEl = (id) => panel.querySelector(id);
+    if (proxyEl("#nono-proxy-next")) {
+      proxyEl("#nono-proxy-next").addEventListener("click", async () => {
+        const r = await proxyMsg({ action: "PROXY_ROTATE" });
+        logMsg(r && r.proxy ? "Proxy -> " + r.proxy.label : "Proxy rotate failed.");
+        refreshProxyStatus();
+      });
+      proxyEl("#nono-proxy-test").addEventListener("click", async () => {
+        logMsg("Testing proxy...");
+        const r = await proxyMsg({ action: "PROXY_TEST", index: 0 });
+        logMsg(r && r.ok ? "Proxy OK " + r.ip + " (" + r.ms + "ms)" : "Proxy FAIL " + (r && r.error ? r.error : ""));
+        refreshProxyStatus();
+      });
+      proxyEl("#nono-proxy-off").addEventListener("click", async () => {
+        await proxyMsg({ action: "PROXY_OFF" });
+        logMsg("Proxy off. System restored.");
+        refreshProxyStatus();
+      });
+      refreshProxyStatus();
+    }
+
     function startHit() {
       const bin = el("#nono-bin").value.trim();
       const combo = el("#nono-combo").value.trim();
@@ -790,6 +838,12 @@
 
     while (!stopRequested && running) {
       const hitStart = Date.now();
+
+      const pr = await proxyMsg({ action: "PROXY_BEFORE_HIT" });
+      if (pr && pr.proxy) {
+        window.__nonoLog && window.__nonoLog("Proxy: " + pr.proxy.label);
+      }
+
       let card;
       if (cfg.combo) {
         const p = parseCombo(cfg.combo);

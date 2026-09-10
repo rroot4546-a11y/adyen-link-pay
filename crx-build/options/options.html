@@ -1,0 +1,154 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Adyen Auto-Pay — Settings</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background: #0b0e13;
+      color: #dde4ee;
+      font-family: 'Segoe UI', Roboto, sans-serif;
+      font-size: 13px;
+      min-height: 100vh;
+    }
+    .wrap { max-width: 860px; margin: 0 auto; padding: 24px 18px 60px; }
+    .topbar {
+      background: linear-gradient(135deg, #00d1b2, #00a88c);
+      color: #00110d;
+      padding: 16px 18px;
+      border-radius: 12px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 18px;
+    }
+    .topbar b { font-size: 15px; letter-spacing: .4px; }
+    .topbar .sub { font-size: 11px; opacity: .75; margin-top: 2px; }
+    .card {
+      background: #10151c;
+      border: 1px solid #1f2a33;
+      border-radius: 12px;
+      padding: 16px;
+      margin-bottom: 16px;
+    }
+    .card h3 {
+      font-size: 12px;
+      letter-spacing: .8px;
+      text-transform: uppercase;
+      color: #7fd4c2;
+      margin-bottom: 12px;
+    }
+    .row { display: flex; align-items: center; gap: 14px; margin-bottom: 12px; flex-wrap: wrap; }
+    .row label { color: #6b7b8d; font-size: 12px; }
+    .switch { position: relative; display: inline-block; width: 42px; height: 22px; }
+    .switch input { opacity: 0; width: 0; height: 0; }
+    .slider {
+      position: absolute; inset: 0; background: #23303c; border-radius: 22px;
+      transition: .2s; cursor: pointer;
+    }
+    .slider:before {
+      content: ""; position: absolute; height: 16px; width: 16px; left: 3px; top: 3px;
+      background: #e6e6e6; border-radius: 50%; transition: .2s;
+    }
+    .switch input:checked + .slider { background: #00a88c; }
+    .switch input:checked + .slider:before { transform: translateX(20px); }
+    select, input[type="number"] {
+      background: #131a22; color: #e6e6e6; border: 1px solid #23303c;
+      border-radius: 8px; padding: 8px 10px; font-size: 13px; outline: none;
+    }
+    textarea {
+      width: 100%; min-height: 220px; background: #0a0d12; color: #c9d6e2;
+      border: 1px solid #1a2430; border-radius: 10px; padding: 12px;
+      font-family: Consolas, Menlo, monospace; font-size: 12px; line-height: 1.6;
+      resize: vertical; outline: none; white-space: pre; overflow: auto;
+    }
+    textarea:focus { border-color: #00a88c; }
+    .btn {
+      background: #23303c; color: #e6e6e6; border: none; padding: 9px 14px;
+      border-radius: 8px; cursor: pointer; font-size: 12px; font-weight: 600;
+    }
+    .btn:hover { background: #2b3b4a; }
+    .btn.primary {
+      background: linear-gradient(135deg, #00d1b2, #00a88c); color: #00110d; font-weight: 700;
+    }
+    .btn.primary:hover { filter: brightness(1.05); }
+    .btn.danger { background: #3a2230; color: #ff7d7d; }
+    .btn:disabled { opacity: .45; cursor: not-allowed; }
+    .hint { font-size: 10.5px; color: #46566a; line-height: 1.5; margin-top: 6px; }
+    .status {
+      padding: 10px 12px; border-radius: 8px; font-size: 12px; margin-top: 10px;
+      background: #0a0d12; border: 1px solid #1a2430; color: #8fa3b5;
+      white-space: pre-wrap; word-break: break-all;
+    }
+    .status.ok { border-color: #00a88c; color: #7fd4c2; }
+    .status.err { border-color: #7d3a3a; color: #ff7d7d; }
+    #results { margin-top: 10px; }
+    .res-line {
+      display: flex; justify-content: space-between; align-items: center; gap: 8px;
+      padding: 6px 10px; border-bottom: 1px solid #141c26; font-family: Consolas, Menlo, monospace;
+      font-size: 11.5px;
+    }
+    .res-line .tag { font-weight: 700; }
+    .res-line .ok { color: #00d1b2; }
+    .res-line .bad { color: #ff5d5d; }
+    .badge {
+      display: inline-block; padding: 2px 8px; border-radius: 8px; font-size: 10px;
+      font-weight: 700; text-transform: uppercase;
+    }
+    .badge.on { background: #00a88c33; color: #00d1b2; }
+    .badge.off { background: #23303c; color: #6b7b8d; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="topbar">
+      <div>
+        <b>ADYEN AUTO-PAY — SETTINGS</b>
+        <div class="sub">Proxy manager · hit rotation · kill switch</div>
+      </div>
+      <span id="active-badge" class="badge off">PROXY OFF</span>
+    </div>
+
+    <div class="card">
+      <h3>Proxy engine</h3>
+      <div class="row">
+        <label class="switch">
+          <input type="checkbox" id="enabled">
+          <span class="slider"></span>
+        </label>
+        <span>Route browser traffic through proxy</span>
+      </div>
+      <div class="row">
+        <label for="mode">Rotation mode</label>
+        <select id="mode">
+          <option value="single">Single — keep same proxy</option>
+          <option value="rotate">Rotate — new proxy per hit</option>
+        </select>
+      </div>
+      <div class="hint">
+        Rotate mode switches to the next proxy at the start of every hit attempt automatically.
+        Fatal proxy errors auto-advance to the next live proxy. Proxy OFF restores the system
+        settings so your normal browsing is untouched.
+      </div>
+      <div id="live-status" class="status">No proxy applied yet.</div>
+    </div>
+
+    <div class="card">
+      <h3>Proxy list</h3>
+      <textarea id="proxies" spellcheck="false" placeholder="One proxy per line (HTTP/HTTPS/SOCKS4/SOCKS5):&#10;&#10;http://user:pass@1.2.3.4:8080&#10;1.2.3.4:3128&#10;socks5://1.2.3.4:1080&#10;https://1.2.3.4:443"></textarea>
+      <div class="row" style="margin-top:12px">
+        <button id="save" class="btn primary">Save list</button>
+        <button id="test-all" class="btn">Test all</button>
+        <button id="apply" class="btn">Apply</button>
+        <button id="apply-next" class="btn">Next</button>
+        <button id="off" class="btn danger">OFF</button>
+      </div>
+      <div class="hint">Apply = use the selected proxy·Next = jump to next proxy in the list.</div>
+      <div id="results"></div>
+    </div>
+  </div>
+
+  <script src="options.js"></script>
+</body>
+</html>

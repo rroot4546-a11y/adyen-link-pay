@@ -1,23 +1,27 @@
 {
   "manifest_version": 3,
   "name": "Adyen Link Auto-Pay",
-  "version": "1.4.1",
-  "description": "Auto-fill, auto-submit and capture checkoutshopper payment requests as cURL.",
+  "version": "1.6.0",
+  "description": "Auto-fill, auto-submit, proxy rotation and capture checkoutshopper payment requests as cURL + response verdicts.",
   "permissions": [
     "storage",
     "activeTab",
     "scripting",
     "tabs",
     "webRequest",
-    "notifications"
+    "notifications",
+    "debugger",
+    "proxy"
   ],
   "host_permissions": [
     "https://checkoutshopper-live.adyen.com/*",
     "https://checkoutshopper-test.adyen.com/*",
     "https://*.adyen.com/*",
     "https://*.adyen.link/*",
-    "https://adyen.link/*"
+    "https://adyen.link/*",
+    "<all_urls>"
   ],
+  "options_page": "options/options.html",
   "background": {
     "service_worker": "background.js"
   },

@@ -2,10 +2,15 @@
 
 document.addEventListener('DOMContentLoaded', () => {
   loadRequests();
+  proxyStatus();
 
   document.getElementById('clear').addEventListener('click', async () => {
     await chrome.runtime.sendMessage({ type: 'CLEAR_CAPTURED' });
     render([]);
+  });
+
+  document.getElementById('proxy').addEventListener('click', () => {
+    chrome.runtime.openOptionsPage();
   });
 
   chrome.runtime.onMessage.addListener((msg) => {
@@ -14,6 +19,26 @@ document.addEventListener('DOMContentLoaded', () => {
     }
   });
 });
+
+function proxyStatus() {
+  chrome.runtime.sendMessage({ action: 'PROXY_STATUS' }, (res) => {
+    const el = document.getElementById('proxy-status');
+    if (!el) return;
+    if (chrome.runtime.lastError || !res) return;
+    el.style.display = 'block';
+    el.innerHTML = (res.enabled && res.proxy)
+      ? 'Proxy: <b>' + (res.proxy.label || res.label) + '</b>' +
+        ' ' + (res.proxy.mode ? '' : '') +
+        (res.proxy.username ? ' · auth' : '') +
+        ' · <span id="open-options">settings</span>'
+      : 'Proxy: <b>OFF</b> · <span id="open-options">settings</span>';
+    const link = document.getElementById('open-options');
+    if (link) {
+      link.style.cssText = 'cursor:pointer;text-decoration:underline;color:#7fd4c2';
+      link.addEventListener('click', () => chrome.runtime.openOptionsPage());
+    }
+  });
+}
 
 function loadRequests() {
   chrome.runtime.sendMessage({ type: 'GET_CAPTURED' }, (res) => {
