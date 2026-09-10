@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Adyen Link Auto-Pay",
-  "version": "1.10.3",
-  "description": "Auto-fill, auto-submit, inbuilt-modal auto-pay + checkoutshopper paste-to-pay (sandbox-gated, opt-in Lab mode for live-looking sim URLs), visual blocked-banner + live Lab toggle, proxy + UA rotation, Telegram hit bridge, capture as cURL + verdicts.",
+  "version": "1.10.4",
+  "description": "Auto-fill, auto-submit, inbuilt-modal auto-pay + checkoutshopper paste-to-pay, one-click Lab mode from the blocked banner (sandbox sims with live-mirror URLs), proxy + UA rotation, Telegram hit bridge, capture as cURL + verdicts.",
   "permissions": [
     "storage",
     "activeTab",

@@ -87,22 +87,35 @@
     ].join(";");
     box.innerHTML =
       '<div style="font-weight:700;font-size:11px;letter-spacing:.6px;text-transform:uppercase;color:#ff7d7d">&#128308; ADYEN AUTO-PAY — BLOCKED</div>' +
-      '<div style="color:#ffd9d9;line-height:1.5">This page looks like a live Adyen host, so the panel is kept off.<br>' +
-      'You are using a sandbox sim? Open <b>Options</b> (right-click icon) and turn <b>Lab mode</b> ON — the panel appears here instantly.</div>' +
-      '<div style="display:flex;gap:8px;align-items:center">' +
-      '<button id="nono-blocked-open" style="background:#7d3a3a;color:#fff;border:none;border-radius:7px;padding:7px 10px;font-size:11px;font-weight:700;cursor:pointer">Open Options</button>' +
+      '<div style="color:#ffd9d9;line-height:1.5">This page looks like a live Adyen host, so the panel is kept off by default.<br>' +
+      'Sandbox sim that mirrors live URLs? Hit the button and it stays on.</div>' +
+      '<div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">' +
+      '<button id="nono-blocked-enable" style="background:#00a88c;color:#00110d;border:none;border-radius:7px;padding:8px 12px;font-size:11px;font-weight:800;cursor:pointer">&#10003; Enable now — it\'s my sandbox sim</button>' +
+      '<button id="nono-blocked-open" style="background:#7d3a3a;color:#fff;border:none;border-radius:7px;padding:8px 10px;font-size:11px;font-weight:700;cursor:pointer">Options</button>' +
       '<button id="nono-blocked-dismiss" style="background:none;border:none;color:#aaa;cursor:pointer;font-size:11px">Dismiss</button>' +
       '</div>';
     document.body.appendChild(box);
-    const open = box.querySelector("#nono-blocked-open");
-    if (open) {
-      open.addEventListener("click", () => {
-        try { chrome.runtime.openOptionsPage(); } catch (e) {}
+    const enable = box.querySelector("#nono-blocked-enable");
+    if (enable) {
+      enable.addEventListener("click", () => {
+        chrome.storage.local.set({ nonoLab: { enabled: true } }, () => {
+          try {
+            const info = box.querySelector("div");
+            if (info) info.textContent = "Lab mode ON — sandbox sim recognized. Panel is appearing…";
+          } catch (e) {}
+          reevaluate();
+        });
       });
     }
     const dismiss = box.querySelector("#nono-blocked-dismiss");
     if (dismiss) {
       dismiss.addEventListener("click", () => removeBlockedNotice());
+    }
+    const open = box.querySelector("#nono-blocked-open");
+    if (open) {
+      open.addEventListener("click", () => {
+        try { chrome.runtime.openOptionsPage(); } catch (e) {}
+      });
     }
   }
 
