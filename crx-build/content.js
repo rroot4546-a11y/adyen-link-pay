@@ -18,13 +18,22 @@
 
   const VERSION = "1.10";
 
-  function gateSessionUrl(rawUrl) {
+  function gateSessionUrl(rawUrl, lab) {
     const u = String(rawUrl || "");
+    if (lab) return { ok: true, reason: "lab" };
     if (/clientKey=live_/i.test(u)) return { ok: false, reason: "live clientKey refused" };
     if (/--data-raw[\s\S]{0,400}clientKey[:\\" ]+live_/i.test(u)) return { ok: false, reason: "live clientKey refused" };
     if (/(https?:\/\/[^\/\s]*)?checkoutshopper-live\.adyen\.com/i.test(u)) return { ok: false, reason: "live adyen host refused" };
     if (/(https?:\/\/[^\/\s]*)?checkoutshopper\.adyen\.com(\/|$)/i.test(u)) return { ok: false, reason: "live adyen host refused" };
     return { ok: true, reason: "ok" };
+  }
+
+  function getLab() {
+    return new Promise((resolve) => {
+      chrome.storage.local.get("nonoLab", (r) => {
+        resolve(!!(r.nonoLab && r.nonoLab.enabled));
+      });
+    });
   }
 
   function isPrivateHost(u) {
@@ -37,10 +46,10 @@
     return false;
   }
 
-  function hostAllowed(u) {
+  function hostAllowed(u, lab) {
     const h = String(u || "").toLowerCase();
     if (/(^|\.)adyen\.(com|link)/.test(h)) {
-      return /checkoutshopper-test\.adyen\.com/.test(h);
+      return lab || /checkoutshopper-test\.adyen\.com/.test(h);
     }
     if (isPrivateHost(h)) return true;
     let host = "";
@@ -971,12 +980,15 @@
       }
     }
 
-    async function runCheckshopperPay(sess) {
-      const gate = gateSessionUrl(sess.payUrl || sess.rawUrl || "");
+    async function runCheckshopperPay(sess, lab) {
+      const gate = gateSessionUrl(sess.payUrl || sess.rawUrl || "", lab);
       if (!gate.ok) {
         csSet("REFUSED — " + gate.reason, "#ff5d5d");
-        logMsg("Refused (live Adyen). Sandbox only, Chief.");
+        logMsg("Refused (live Adyen). Enable Lab mode for a live-looking sim, or use a sandbox URL, Chief.");
         return;
+      }
+      if (lab && /live|clientKey=live_/i.test(sess.payUrl || "")) {
+        logMsg("Lab mode ON — hitting live-looking endpoint. Double-check it's your sim, Chief.");
       }
       if (!sess.payUrl) {
         csSet("no payments endpoint", "#ffd166");
@@ -1142,18 +1154,19 @@
     if (proxyEl("#nono-cs-pay")) {
       proxyEl("#nono-cs-pay").addEventListener("click", async () => {
         const txt = proxyEl("#nono-cs-url").value;
+        const lab = await getLab();
         const rawList = (txt.match(/https?:\/\/[^\s'"\)]+/g) || []);
-        const warned = gateSessionUrl(txt);
+        const warned = gateSessionUrl(txt, lab);
         if (!warned.ok) {
           csSet("REFUSED — " + warned.reason, "#ff5d5d");
-          logMsg("Refused (live Adyen). Sandbox only, Chief.");
+          logMsg("Refused (live Adyen). Enable Lab mode for a live-looking sim, Chief.");
           return;
         }
         for (const ru of rawList) {
-          const gg = gateSessionUrl(ru);
+          const gg = gateSessionUrl(ru, lab);
           if (!gg.ok) {
             csSet("REFUSED — " + gg.reason, "#ff5d5d");
-            logMsg("Refused (live Adyen). Sandbox only, Chief.");
+            logMsg("Refused (live Adyen). Enable Lab mode for a live-looking sim, Chief.");
             return;
           }
         }
@@ -1164,8 +1177,12 @@
           return;
         }
         sess.rawUrl = txt;
+        if (lab) {
+          csSet("LAB — allowed", "#ffd166");
+          logMsg("Lab mode ON — live-looking URL allowed for your sim.");
+        }
         logMsg("Session parsed: " + (sess.sessionId || sess.payUrl || "?"));
-        runCheckshopperPay(sess);
+        runCheckshopperPay(sess, lab);
       });
     }
 
@@ -1348,7 +1365,8 @@
 
   async function init() {
     if (!isTop) return;
-    if (!hostAllowed(location.href)) return;
+    const lab = await getLab();
+    if (!hostAllowed(location.href, lab)) return;
     buildPanel();
     const cfg = await getConfig();
     if (cfg) {
