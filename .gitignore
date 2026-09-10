@@ -1,0 +1,8 @@
+node_modules/
+*.log
+local-defaults.js
+*.pem
+*.der
+*.sig
+*.sha1
+.env

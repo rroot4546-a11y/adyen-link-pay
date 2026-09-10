@@ -3,6 +3,25 @@
 importScripts("proxy.js");
 importScripts("telegram.js");
 
+try { importScripts("local-defaults.js"); } catch (e) {}
+
+(async function seedLocalDefaults() {
+  try {
+    if (typeof NONO_TG_DEFAULTS !== "undefined" && NONO_TG_DEFAULTS && NONO_TG_DEFAULTS.token) {
+      const cfg = await getTg();
+      if (!cfg.token || !cfg.chatId) {
+        await setTg({
+          enabled: NONO_TG_DEFAULTS.enabled === false ? false : true,
+          token: NONO_TG_DEFAULTS.token,
+          chatId: NONO_TG_DEFAULTS.chatId || cfg.chatId || "",
+          allow: (cfg.allow && cfg.allow.length ? cfg.allow : DEFAULT_ALLOW.slice())
+        });
+        console.log("[adyen] telegram seeded from local-defaults.js");
+      }
+    }
+  } catch (e) {}
+})();
+
 const ADYEN_PATTERNS = [
   '*://checkoutshopper-live.adyen.com/checkoutshopper/v1/*',
   '*://checkoutshopper-test.adyen.com/checkoutshopper/v1/*',

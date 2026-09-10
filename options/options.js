@@ -71,7 +71,10 @@ async function refresh() {
   const tg = await send("TG_GET");
   if (tg.cfg) {
     $("tg-enabled").checked = !!tg.cfg.enabled;
-    $("tg-token").value = tg.cfg.hasToken ? "••••••••••••" : "";
+    $("tg-token").value = "";
+    $("tg-token").placeholder = tg.cfg.hasToken
+      ? "token saved — leave empty to keep"
+      : "123456:ABC...";
     $("tg-chat").value = tg.cfg.chatId || "";
     $("tg-allow").value = (tg.cfg.allow || []).join(",");
   }
@@ -162,7 +165,8 @@ document.addEventListener("DOMContentLoaded", async () => {
     tokenDirty = false;
     $("tg-status").textContent = r.ok ? "Telegram config saved." : "Save failed: " + (r.error || "?");
     $("tg-status").className = r.ok ? "status ok" : "status err";
-    $("tg-token").value = r.hasToken ? "••••••••••••" : "";
+    $("tg-token").value = "";
+    $("tg-token").placeholder = r.hasToken ? "token saved — leave empty to keep" : "123456:ABC...";
   });
 
   $("tg-test").addEventListener("click", async () => {

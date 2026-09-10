@@ -323,7 +323,7 @@
         if (capturedResps.length > 60) capturedResps.shift();
         const info = parseAdyenResp(r.body);
         if (info) {
-          window.__nonoResult && window.__nonoResult("&#1.8.35;",
+          window.__nonoResult && window.__nonoResult("&#1.9.05;",
             "RESP " + (info.resultCode || info.action || "?") +
             (info.refusalReason ? " | " + info.refusalReason : ""), "#c9b8ff");
         }
@@ -555,7 +555,7 @@
         <div style="display:flex;align-items:center;gap:8px">
           <span style="font-size:16px">&#9889;</span>
           <b style="font-size:13px;letter-spacing:.5px">ADYEN AUTO-PAY</b>
-          <span id="nono-ver" style="font-size:9px;background:#00110d33;color:#00110d;padding:2px 6px;border-radius:8px">1.8.3</span>
+          <span id="nono-ver" style="font-size:9px;background:#00110d33;color:#00110d;padding:2px 6px;border-radius:8px">1.9.0</span>
         </div>
         <div style="display:flex;gap:6px">
           <button id="nono-dbg" title="Debug DOM" style="background:#00110d22;border:none;color:#00110d;cursor:pointer;width:22px;height:22px;border-radius:6px;font-size:10px;line-height:1;font-weight:700">DBG</button>
