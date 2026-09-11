@@ -349,15 +349,24 @@
     return "us" + Math.floor(1000 + Math.random() * 9000) + new Date().getTime().toString().slice(-3) + "@" + d;
   }
 
+  let signalCache = { adyenAt: 0, adyen: false, stripeAt: 0, stripe: false };
   function stripeUISignal() {
-    if (/(^|\.)stripe\.(com|network)/.test(location.hostname)) return true;
-    const f = Array.from(document.querySelectorAll("iframe")).some((x) =>
-      /stripe\.(com|network)/.test(x.src || "") || (x.name || "").indexOf("__privateStripeFrame") === 0
-    );
-    if (f) return true;
-    const html = document.documentElement ? document.documentElement.innerHTML : "";
-    if (/__privateStripeFrame|payment-element|stripe-form|hosted-payment-sheet|data-testid=["']card/.test(html)) return true;
-    return false;
+    const now = Date.now();
+    if (now - signalCache.stripeAt < 500) return signalCache.stripe;
+    signalCache.stripeAt = now;
+    signalCache.stripe = (function () {
+      if (/(^|\.)stripe\.(com|network)/.test(location.hostname)) return true;
+      try {
+        const f = Array.from(document.querySelectorAll("iframe")).some((x) =>
+          /stripe\.(com|network)/.test(x.src || "") || (x.name || "").indexOf("__privateStripeFrame") === 0
+        );
+        if (f) return true;
+        const html = document.documentElement ? document.documentElement.innerHTML : "";
+        if (/__privateStripeFrame|payment-element|stripe-form|hosted-payment-sheet|data-testid=["']card/.test(html)) return true;
+      } catch (e) {}
+      return false;
+    })();
+    return signalCache.stripe;
   }
 
   function lastRespSince(ts) {
@@ -694,17 +703,28 @@
   });
 
   function adyenUISignal() {
-    if (document.querySelector('[class*="adyen-checkout"], [data-testid*="payment-method"], [class*="adyen-modal"]')) return true;
-    const f = Array.from(document.querySelectorAll("iframe")).some((x) =>
-      /checkoutshopper|adyen/.test(x.src || ""));
-    return f;
+    const now = Date.now();
+    if (now - signalCache.adyenAt < 500) return signalCache.adyen;
+    signalCache.adyenAt = now;
+    signalCache.adyen = (function () {
+      try {
+        if (document.querySelector('[class*="adyen-checkout"], [data-testid*="payment-method"], [class*="adyen-modal"]')) return true;
+        const f = Array.from(document.querySelectorAll("iframe")).some((x) =>
+          /checkoutshopper|adyen/.test(x.src || ""));
+        return f;
+      } catch (e) { return false; }
+    })();
+    return signalCache.adyen;
   }
 
-  const observer = new MutationObserver(() => {
+  let scanScheduled = false;
+  let lastScanAt = 0;
+  function scan() {
     if (pendingCard) {
       const r = fillOwned(pendingCard);
       report("nono_ff", { tick: currentTick, fields: r.fields, any: r.any });
     }
+    if (!isTop) return;
     if (!modalStarted && (adyenUISignal() || stripeUISignal())) {
       modalStarted = true;
       if (!document.getElementById("nono-panel")) init();
@@ -721,6 +741,17 @@
         }
       });
     }
+  }
+  const observer = new MutationObserver(() => {
+    if (scanScheduled) return;
+    scanScheduled = true;
+    requestAnimationFrame(() => {
+      scanScheduled = false;
+      const now = Date.now();
+      if (now - lastScanAt < 300) return;
+      lastScanAt = now;
+      scan();
+    });
   });
   observer.observe(document.documentElement || document, {
     childList: true, subtree: true

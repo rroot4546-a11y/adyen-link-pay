@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "Adyen Link Auto-Pay",
-  "version": "1.10.8",
-  "description": "Auto-fill, auto-submit, inbuilt modal auto-pay + checkoutshopper paste-to-pay — panel on any page with embedded Adyen; Lab mode affirmation unlocks any host/page, proxy + UA rotation, Telegram hit bridge.",
+  "version": "1.12.1",
+  "description": "Auto-fill, auto-submit, inbuilt modal auto-pay + checkoutshopper paste-to-pay — panel on any page with embedded Adyen + Stripe (hosted payment links / inbuilt Elements); Lab mode affirmation unlocks any host/page, proxy + UA rotation, Telegram hit bridge.",
   "permissions": [
     "storage",
     "activeTab",
@@ -19,6 +19,9 @@
     "https://*.adyen.com/*",
     "https://*.adyen.link/*",
     "https://adyen.link/*",
+    "https://*.stripe.com/*",
+    "https://*.stripe.network/*",
+    "https://api.stripe.com/*",
     "https://api.telegram.org/*",
     "<all_urls>"
   ],
@@ -46,6 +49,8 @@
         "https://*.adyen.com/*",
         "https://*.adyen.link/*",
         "https://adyen.link/*",
+        "https://*.stripe.com/*",
+        "https://*.stripe.network/*",
         "http://127.0.0.1/*",
         "http://localhost/*",
         "<all_urls>"
@@ -54,6 +59,7 @@
         "lib/cardgen.js",
         "content.js"
       ],
+      "all_frames": true,
       "run_at": "document_idle"
     }
   ]
