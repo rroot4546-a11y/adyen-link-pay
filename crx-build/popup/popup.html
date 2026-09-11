@@ -6,7 +6,7 @@
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
-      width: 380px;
+      width: min(380px, 100vw);
       background: #0b0e13;
       color: #dde4ee;
       font-family: 'Segoe UI', Roboto, sans-serif;
@@ -161,6 +161,11 @@
       color: #8fa3b5;
     }
     #proxy-status b { color: #00d1b2; }
+    @media (max-width: 420px) {
+      body { font-size: 12px; }
+      .topbar { padding: 10px 12px; }
+      .topbar b { font-size: 13px; }
+    }
   </style>
 </head>
 <body>

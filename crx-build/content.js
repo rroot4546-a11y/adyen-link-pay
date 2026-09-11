@@ -69,7 +69,7 @@
     });
   }
 
-  const VERSION = "1.12";
+  const VERSION = "1.12.2";
 
   function gateSessionUrl(rawUrl, lab) {
     const u = String(rawUrl || "");
@@ -499,14 +499,16 @@
       (el.getAttribute("autocomplete") || "") + " " +
       (typeof el.className === "string" ? el.className : "")).toLowerCase();
     if (/(card\s*[-_ ]*number|cardnumber|ccnum|cc[-_ ]number|\bpan\b|enter your card number|encrypted\w*(number|pan))/.test(s)) return "number";
-    if (/(expiry|expiration)[-_ ]*(month)?|cardexpiry(month)?|encrypted\w*month|expmonth/.test(s) && !/year/.test(s)) return "month";
-    if (/(expiry|expiration)[-_ ]*year|cardexpiryyear|encrypted\w*year|expyear/.test(s) || (/exp/.test(s) && /year/.test(s))) return "year";
-    if (/(cvc|cvv|csc|security)[-_ ]*(code)?|cardcvc|cardcvcfront|security code|encryptedcvc/.test(s)) return "cvc";
+    if (/(exp[-_ ]?date|cc-exp|cardexpiry(?![-_ ]?(month|year))|card[-_ ]?exp(?![-_ ]?(month|year)))/.test(s)) return "expiry";
+    if (/(expir(y|ation)[-_ ]*month|cardexpiry[-_ ]?month|expmonth|encrypted\w*month)/.test(s)) return "month";
+    if (/(expir(y|ation)[-_ ]*year|cardexpiry[-_ ]?year|expyear|encrypted\w*year)/.test(s)) return "year";
+    if (/(cvc|cvv|csc|security[-\s_]*(code)?|cardcvc|cardcid|encryptedcvc)/.test(s)) return "cvc";
+    if (/(postal[-\s_]*(code)?|zip[-\s_]*code|cc-zip)/.test(s)) return "postal";
     return null;
   }
 
   function fillOwned(card) {
-    const fields = { number: false, month: false, year: false, cvc: false };
+    const fields = { number: false, month: false, year: false, cvc: false, expiry: false, postal: false };
     let any = false;
 
     const inputs = Array.from(document.querySelectorAll("input"));
@@ -517,6 +519,10 @@
       if (kind === "number" && !fields.number) {
         typeValue(inp, card.number || "");
         fields.number = true; any = true;
+      } else if (kind === "expiry" && !fields.expiry) {
+        typeValue(inp, String(card.month || card.expiryMonth || "12").padStart(2, "0") + "/" +
+          String(card.year || card.expiryYear || "2029").slice(-2));
+        fields.expiry = true; any = true;
       } else if (kind === "month" && !fields.month) {
         typeValue(inp, String(card.month || card.expiryMonth || "12").padStart(2, "0"));
         fields.month = true; any = true;
@@ -526,6 +532,9 @@
       } else if (kind === "cvc" && !fields.cvc) {
         typeValue(inp, card.cvc || "");
         fields.cvc = true; any = true;
+      } else if (kind === "postal" && !fields.postal && card.postal) {
+        typeValue(inp, card.postal);
+        fields.postal = true; any = true;
       }
     }
 
@@ -574,14 +583,14 @@
   function summarize(pref) {
     return new Promise((resolve) => {
       chrome.storage.local.get(null, (all) => {
-        const agg = { number: false, month: false, year: false, cvc: false, any: false, frames: 0, texts: [] };
+        const agg = { number: false, month: false, year: false, cvc: false, expiry: false, postal: false, any: false, frames: 0, texts: [] };
         Object.keys(all).forEach((k) => {
           if (k.indexOf(pref) !== 0) return;
           const r = all[k];
           if (!r || r.tick === undefined || r.tick !== currentTick) return;
           agg.frames++;
           if (r.fields) {
-            ["number", "month", "year", "cvc"].forEach((f) => {
+            ["number", "month", "year", "cvc", "expiry", "postal"].forEach((f) => {
               if (r.fields[f]) agg[f] = true;
             });
             if (r.any) agg.any = true;
@@ -982,19 +991,42 @@
     return null;
   }
 
+  function updateBinSpec() {
+    const specEl = document.getElementById("nono-bin-spec");
+    if (!specEl) return;
+    const binEl = document.getElementById("nono-bin");
+    const b = (binEl ? binEl.value : "").trim().replace(/[\s-]/g, "");
+    if (!/^[0-9]{2,}$/.test(b)) {
+      specEl.style.color = "#6b7b8d";
+      specEl.textContent = "type a BIN to auto-detect brand/length/CVC";
+      return;
+    }
+    if (!window.CardGen || !window.CardGen.cardSpec) {
+      specEl.style.color = "#6b7b8d";
+      specEl.textContent = "cardgen unavailable";
+      return;
+    }
+    const spec = window.CardGen.cardSpec(b);
+    const sample = window.CardGen.genNumber(b, spec.length);
+    const luhn = window.CardGen.isValidLuhn(sample);
+    const fullBIN = /^\d{6,}$/.test(b) ? "BIN " + b.slice(0, 6) : "";
+    specEl.style.color = luhn ? "#00d1b2" : "#ff7d7d";
+    specEl.textContent = (fullBIN ? fullBIN + " · " : "") + spec.label + " · " + spec.length + "-digit · CVC " + spec.cvcLen + " · Luhn " + (luhn ? "OK" : "ERR");
+  }
+
   function buildPanel() {
     if (document.getElementById("nono-panel")) return;
 
     const panel = document.createElement("div");
     panel.id = "nono-panel";
     panel.style.cssText = [
-      "position:fixed", "top:10px", "right:10px", "z-index:2147483647",
-      "width:min(320px, calc(100vw - 20px))", "background:#0b0e13",
+      "position:fixed", "top:8px", "right:8px", "z-index:2147483647",
+      "width:min(320px, calc(100vw - 16px))", "background:#0b0e13",
       "color:#e6e6e6", "font-family:Segoe UI, Roboto, sans-serif",
       "border:1px solid #1f2a33", "border-radius:14px", "padding:0",
       "box-shadow:0 12px 40px rgba(0,0,0,.65)", "font-size:12px",
       "user-select:none", "overflow:hidden", "transition:transform .28s ease,opacity .28s ease",
-      "opacity:0", "transform:translateX(40px)", "max-height:calc(100vh - 20px)",
+      "opacity:0", "transform:translateX(40px)", "max-height:calc(100vh - 16px)",
       "display:flex", "flex-direction:column"
     ].join(";");
 
@@ -1003,7 +1035,7 @@
         <div style="display:flex;align-items:center;gap:8px">
           <span style="font-size:16px">&#9889;</span>
           <b style="font-size:13px;letter-spacing:.5px">ADYEN AUTO-PAY</b>
-          <span id="nono-ver" style="font-size:9px;background:#00110d33;color:#00110d;padding:2px 6px;border-radius:8px">1.12</span>
+          <span id="nono-ver" style="font-size:9px;background:#00110d33;color:#00110d;padding:2px 6px;border-radius:8px">1.12.2</span>
         </div>
         <div style="display:flex;gap:6px">
           <button id="nono-dbg" title="Debug DOM" style="background:#00110d22;border:none;color:#00110d;cursor:pointer;width:22px;height:22px;border-radius:6px;font-size:10px;line-height:1;font-weight:700">DBG</button>
@@ -1011,22 +1043,24 @@
         </div>
       </div>
 
-      <div style="padding:12px;display:flex;flex-direction:column;gap:6px">
+      <div style="padding:12px;display:flex;flex-direction:column;gap:6px;overflow-y:auto;flex:1 1 auto;min-height:0">
         <div style="display:flex;gap:6px">
           <div style="flex:1">
             <label style="font-size:9px;text-transform:uppercase;color:#6b7b8d">Custom BIN</label>
             <input id="nono-bin" type="text" placeholder="4400661989645" maxlength="19" inputmode="numeric"
               style="width:100%;box-sizing:border-box;padding:8px;background:#131a22;color:#e6e6e6;border:1px solid #23303c;border-radius:8px;font-size:13px;outline:none">
           </div>
-          <div style="width:88px">
+          <div style="width:88px;flex-shrink:0">
             <label style="font-size:9px;text-transform:uppercase;color:#6b7b8d">Card Len</label>
             <select id="nono-len" style="width:100%;padding:8px;background:#131a22;color:#e6e6e6;border:1px solid #23303c;border-radius:8px;font-size:12px;outline:none">
+              <option value="0">Auto</option>
               <option value="16">16</option>
               <option value="15">15</option>
               <option value="19">19</option>
             </select>
           </div>
         </div>
+        <div id="nono-bin-spec" style="font-size:10px;color:#6b7b8d;min-height:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">type a BIN to auto-detect brand/length/CVC</div>
 
         <div style="display:flex;gap:6px;align-items:flex-end">
           <div style="flex:1">
@@ -1211,7 +1245,7 @@
         holder: el("#nono-holder").value.trim(),
         email: el("#nono-email") ? el("#nono-email").value.trim() : "",
         stripeUrl: el("#nono-stripe-url") ? el("#nono-stripe-url").value.trim() : "",
-        cardLength: parseInt(el("#nono-len").value, 10) || 16,
+        cardLength: parseInt(el("#nono-len").value, 10) || 0,
         autoSubmit: el("#nono-autosubmit").checked,
         autoOnLoad: el("#nono-autoonload").checked,
         autoInbuilt: el("#nono-autoinbuilt") ? el("#nono-autoinbuilt").checked : false,
@@ -1265,12 +1299,29 @@
       panel.style.opacity = "0";
       setTimeout(() => panel.remove(), 200);
     });
-    el("#nono-bin").addEventListener("input", savePanelState);
+
+    function updateBinSpecLocal() {
+      updateBinSpec();
+      const lenSel = document.getElementById("nono-len");
+      const binEl = document.getElementById("nono-bin");
+      if (lenSel && binEl) {
+        const b = (binEl.value || "").trim().replace(/[\s-]/g, "");
+        if (/^[0-9]{2,}$/.test(b) && window.CardGen && window.CardGen.cardSpec) {
+          const spec = window.CardGen.cardSpec(b);
+          if (String(lenSel.value) === "0") lenSel.value = String(spec.length);
+        }
+      }
+    }
+
+    el("#nono-bin").addEventListener("input", () => {
+      updateBinSpecLocal();
+      savePanelState();
+    });
+    el("#nono-len").addEventListener("change", () => { updateBinSpecLocal(); savePanelState(); });
     el("#nono-combo").addEventListener("input", savePanelState);
     el("#nono-holder").addEventListener("input", savePanelState);
     el("#nono-email").addEventListener("input", savePanelState);
     el("#nono-stripe-url").addEventListener("input", savePanelState);
-    el("#nono-len").addEventListener("change", savePanelState);
     el("#nono-autosubmit").addEventListener("change", savePanelState);
     el("#nono-autoonload").addEventListener("change", savePanelState);
     el("#nono-stripe-url").addEventListener("input", stripeAutoRun);
@@ -1456,7 +1507,7 @@
           const p = parseCombo(cfg.combo);
           card = { number: p.number, month: p.month, year: p.year, cvc: p.cvc, holder: cfg.holder || "JOHN DOE" };
         } else if (window.CardGen && cfg && cfg.bin) {
-          card = window.CardGen.genCard(cfg.bin.replace(/\s/g, ""), { length: cfg.cardLength || 16 });
+          card = window.CardGen.genCard(cfg.bin.replace(/\s/g, ""), { length: cfg.cardLength || 0 });
           card.holder = cfg.holder || "JOHN DOE";
           card.month = card.expiryMonth;
           card.year = card.expiryYear;
@@ -1870,7 +1921,7 @@
         card = { number: p.number, month: p.month, year: p.year, cvc: p.cvc, holder: cfg.holder || "JOHN DOE" };
         card.email = cfg.email || randomEmail();
       } else {
-        card = window.CardGen.genCard(cfg.bin.replace(/\s/g, ""), { length: cfg.cardLength || 16 });
+        card = window.CardGen.genCard(cfg.bin.replace(/\s/g, ""), { length: cfg.cardLength || 0 });
         card.holder = cfg.holder || "JOHN DOE";
         card.month = card.expiryMonth;
         card.year = card.expiryYear;
@@ -2039,7 +2090,7 @@
     const cfg = await getConfig();
     if (cfg) {
       const ids = ["nono-bin", "nono-combo", "nono-holder", "nono-email", "nono-stripe-url", "nono-len", "nono-autosubmit", "nono-autoonload"];
-      const vals = [cfg.bin || "", cfg.combo || "", cfg.holder || "", cfg.email || "", cfg.stripeUrl || "", String(cfg.cardLength || 16), !!cfg.autoSubmit, !!cfg.autoOnLoad];
+      const vals = [cfg.bin || "", cfg.combo || "", cfg.holder || "", cfg.email || "", cfg.stripeUrl || "", String(cfg.cardLength || 0), !!cfg.autoSubmit, !!cfg.autoOnLoad];
       ids.forEach((id, i) => {
         const e = document.getElementById(id);
         if (e) {
@@ -2047,6 +2098,7 @@
           else e.value = vals[i];
         }
       });
+      if (document.getElementById("nono-bin-spec")) updateBinSpec();
       const ib = document.getElementById("nono-autoinbuilt");
       if (ib) ib.checked = !!cfg.autoInbuilt;
       const ist = document.getElementById("nono-autostripe");

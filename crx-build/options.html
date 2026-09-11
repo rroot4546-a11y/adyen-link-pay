@@ -98,6 +98,10 @@
     }
     .badge.on { background: #00a88c33; color: #00d1b2; }
     .badge.off { background: #23303c; color: #6b7b8d; }
+    @media (max-width: 600px) {
+      .wrap { padding: 14px 12px 56px; }
+      textarea { font-size: 11px; }
+    }
   </style>
 </head>
 <body>
@@ -179,6 +183,23 @@
       </div>
       <div id="tg-status" class="status">Gated to sandbox origins only. Live adyen.com domains are hard-blocked in code.</div>
       <div class="hint">Add the token here — it is stored in chrome.storage, never in the repo.</div>
+    </div>
+
+    <div class="card">
+      <h3>Lab mode — live-looking URLs (default OFF)</h3>
+      <div class="row">
+        <label class="switch">
+          <input type="checkbox" id="lab-enabled">
+          <span class="slider"></span>
+        </label>
+        <span>Allow checkoutshopper-live style URLs &amp; live_ client keys (simulator only)</span>
+      </div>
+      <div id="lab-status" class="status">Lab mode OFF — live Adyen hosts are refused.</div>
+      <div class="hint">
+        For local simulators that mirror Adyen URLs exactly (hosts-file / local DNS). Keep OFF unless you
+        know what you're doing — it bypasses the live-domain block for the paste-to-pay driver and lets the
+        panel arm on live-looking hosts.
+      </div>
     </div>
 
     <div class="card">

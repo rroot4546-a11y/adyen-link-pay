@@ -92,8 +92,28 @@ function setUAStatus(state, list) {
   box.textContent = "Active #" + (idx + 1) + "/" + list.length + "\n" + list[idx];
 }
 
+function setLabStatus(enabled) {
+  const s = $("lab-status");
+  s.className = "status " + (enabled ? "err" : "");
+  s.textContent = enabled
+    ? "Lab mode ON — live-looking URLs allowed. Only for your local simulator."
+    : "Lab mode OFF — live Adyen hosts are refused.";
+}
+
 document.addEventListener("DOMContentLoaded", async () => {
   await refresh();
+
+  chrome.storage.local.get("nonoLab", (r) => {
+    const en = !!(r.nonoLab && r.nonoLab.enabled);
+    $("lab-enabled").checked = en;
+    setLabStatus(en);
+  });
+  $("lab-enabled").addEventListener("change", () => {
+    const en = $("lab-enabled").checked;
+    chrome.storage.local.set({ nonoLab: { enabled: en } }, () => {
+      setLabStatus(en);
+    });
+  });
 
   chrome.runtime.onMessage.addListener((msg) => {
     if (!msg) return;
