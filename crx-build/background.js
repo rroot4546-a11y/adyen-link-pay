@@ -516,24 +516,38 @@ function attemptPay() {
     })(root);
     return out;
   }
+  function score(b) {
+    let id = "", cls = "", testid = "", aria = "", typ = "";
+    try {
+      id = b.id || "";
+      cls = (b.className && typeof b.className === "string" ? b.className : (b.className.baseVal || "")).toString() || "";
+      testid = b.getAttribute("data-testid") || "";
+      aria = b.getAttribute("aria-label") || "";
+      typ = b.type || "";
+    } catch (e) {}
+    const text = ((b.innerText || b.value || "") + " " + aria).replace(/\s+/g, " ").trim().toLowerCase();
+    let s = 0;
+    if (/hosted-payment-submit-button|hosted-payment-element/.test(id + " " + cls + " " + testid)) s += 100;
+    else if (/adyen-checkout__button|SubmitButton|submit[-_]?button|pay[-_]?button|btn[-_]?pay|checkout-button/.test(cls + " " + testid + " " + id)) s += 80;
+    if (typ === "submit") s += 30;
+    if (/^(pay|pay now|pay[ \t]+(\$|€|£|¥|\bsar\b|\begp\b|\bkwd\b|\bae[ds]\b|\bqar\b|\bdin\b|\bbhd\b|\bomr\b|\bijp\b|\btr\b)?[ \t]*[\d.,]+|submit( payment| order| card)?|proceed[ \t]+(to[ \t]+)?(pay|checkout|payment)|place[ \t]+order|confirm[ \t]+(order|payment|purchase|card)?|complete[ \t]+(order|purchase|payment)|buy[ \t]+now|pay[ \t]+with[ \t]+card|continue[ \t]+to[ \t]+pay)/i.test(text)) s += 60;
+    else if (/pay|submit|confirm|place order|checkout|complete (order|purchase|payment)/.test(text)) s += 25;
+    if (b.disabled) s -= 6;
+    return s;
+  }
   const els = walkAll(document);
-  const candidates = [];
+  const best = { el: null, score: 0 };
   for (const b of els) {
     if (!b.matches) continue;
-    if (!b.matches("button, [role='button'], input[type='submit'], input[type='button'], a")) continue;
+    if (!b.matches("button, [role='button'], input[type='submit'], input[type='button']")) continue;
     const rect = b.getBoundingClientRect();
     if (!rect.width && !rect.height) continue;
-    const label = ((b.innerText || b.value || b.getAttribute('aria-label') || '') + ' ' +
-      (b.getAttribute('data-testid') || '') + ' ' + (b.id || '') + ' ' +
-      (typeof b.className === 'string' ? b.className : '')).trim();
-    const l = label.toLowerCase();
-    const isSubmit = b.type === 'submit' ||
-      b.matches("button[type='submit']") ||
-      /pay|submit|confirm|place order|continue|complete purchase|pay \$/.test(l) ||
-      /pay-button|submit|adyen-checkout__button/.test(l);
-    if (isSubmit && !b.disabled) candidates.push(b);
+    const s = score(b);
+    if (b.disabled) continue;
+    if (s > best.score) { best.el = b; best.score = s; }
   }
-  for (const b of candidates) {
+  if (best.el) {
+    const b = best.el;
     try { b.scrollIntoView({ block: 'center' }); } catch (e) {}
     try { b.focus({ preventScroll: true }); } catch (e) {}
     const opts = { bubbles: true, cancelable: true, view: window, button: 0 };
@@ -546,14 +560,15 @@ function attemptPay() {
       }
     });
     try { b.click(); } catch (e) {}
+    try { if (b.form && typeof b.form.requestSubmit === 'function') b.form.requestSubmit(b); } catch (e) {}
     out.clicked.push(((b.innerText || b.value || 'btn').trim() || 'btn').slice(0, 24));
   }
-  const html = document.documentElement ? document.documentElement.innerHTML : '';
   const body = document.body ? document.body.innerText : '';
-  out.submitting = /processing|please wait|connecting|spinner|thanks|redirecting/.test(
-    html.toLowerCase() + (body || '').toLowerCase().slice(0, 800)
-  );
-  out.detected = candidates.length > 0;
+  out.submitting = out.clicked.length > 0 &&
+    !/declined|error|refused|invalid|unable|rejected|incorrect|does not/i.test(body) &&
+    (/processing|please wait|redirect(ing|ed)|thanks|almost done|spinner/i.test(body.toLowerCase()) ||
+      out.clicked.length > 0);
+  out.detected = out.clicked.length > 0;
   return out;
 }
 

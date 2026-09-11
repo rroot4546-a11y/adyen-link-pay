@@ -980,33 +980,41 @@
     try { b.click(); } catch (e) {}
   }
 
+  function payButtonScore(b) {
+    let id = "", cls = "", testid = "", aria = "", typ = "";
+    try {
+      id = b.id || "";
+      cls = (b.className && typeof b.className === "string" ? b.className : (b.className.baseVal || "")).toString() || "";
+      testid = b.getAttribute("data-testid") || "";
+      aria = b.getAttribute("aria-label") || "";
+      typ = b.type || "";
+    } catch (e) {}
+    const text = (((b.innerText || b.value || "") + " " + aria).replace(/\s+/g, " ").trim()).toLowerCase();
+    let s = 0;
+    if (/hosted-payment-submit-button|hosted-payment-element/.test(id + " " + cls + " " + testid)) s += 100;
+    else if (/adyen-checkout__button|SubmitButton|submit[-_]?button|pay[-_]?button|btn[-_]?pay|checkout-button/.test(cls + " " + testid + " " + id)) s += 80;
+    else if (/pay|submit|confirm/.test(id)) s += 40;
+    if (typ === "submit") s += 30;
+    if (/^(pay|pay now|pay[ \t]+(\$|€|£|¥|\bsar\b|\begp\b|\bkwd\b|\bae[ds]\b|\bqar\b|\bdin\b|\bbhd\b|\bomr\b|\bijp\b|\btr\b)?[ \t]*[\d.,]+|submit( payment| order| card)?|proceed[ \t]+(to[ \t]+)?(pay|checkout|payment)|place[ \t]+order|confirm[ \t]+(order|payment|purchase|card)?|complete[ \t]+(order|purchase|payment)|buy[ \t]+now|pay[ \t]+with[ \t]+card|continue[ \t]+to[ \t]+pay)/i.test(text)) s += 60;
+    else if (/pay|submit|confirm|place order|checkout|complete (order|purchase|payment)/.test(text)) s += 25;
+    if (b.disabled) s -= 6;
+    else if (aria === "false" || (!b.disabled && aria !== "true")) s += 4;
+    return s;
+  }
+
   function findPayButton() {
-    const buttons = Array.from(document.querySelectorAll(
-      "button, [role='button'], a, input[type='submit'], input[type='button']"
+    const els = Array.from(document.querySelectorAll(
+      "button, [role='button'], input[type='submit'], input[type='button']"
     ));
-    let adyenBtn = null;
-    let stripeBtn = null;
-    for (const b of buttons) {
+    let best = null;
+    let bestScore = 0;
+    for (const b of els) {
       const rect = b.getBoundingClientRect();
       if (rect.width === 0 && rect.height === 0) continue;
-      const cls = (typeof b.className === "string" ? b.className : "") + " " + (b.id || "") + " " + (b.getAttribute("data-testid") || "");
-      const text = ((b.innerText || "") + " " + (b.getAttribute("aria-label") || "")).trim().toLowerCase();
-      if (/adyen-checkout__button/.test(cls)) {
-        adyenBtn = adyenBtn || b;
-      }
-      if (/hosted-payment-submit-button|stripe-payment-element|pay-button|submit-button/.test(cls)) {
-        stripeBtn = stripeBtn || b;
-      }
-      if (/^(pay|pay now|pay \$?\d|proceed to pay|confirm|submit|place order|complete purchase|continue)/i.test(text)) {
-        return b;
-      }
-      if (/pay/i.test(text) && text.length < 40 && b.offsetParent) {
-        adyenBtn = adyenBtn || b;
-      }
+      const s = payButtonScore(b);
+      if (s > bestScore) { best = b; bestScore = s; }
     }
-    if (stripeBtn && !stripeBtn.disabled) return stripeBtn;
-    if (adyenBtn && !adyenBtn.disabled) return adyenBtn;
-    return adyenBtn || stripeBtn;
+    return best;
   }
 
   function waitPayEnabled(timeout) {
@@ -1090,33 +1098,40 @@
     if (ok) return true;
 
     window.__nonoLog && window.__nonoLog("Pay not moving, waiting for enable...");
-    const btn = await waitPayEnabled(6000);
+    const btn = await waitPayEnabled(8000);
     if (btn && !btn.disabled) {
-      btn.click();
-      await sleep(1600);
-      if (isProcessing()) return true;
+      ok = await clickPayButton(btn);
+      if (ok) return true;
     }
 
     const anyBtn = findPayButton();
     if (anyBtn) {
-      if (anyBtn.disabled) anyBtn.disabled = false;
-      fireClick(anyBtn);
-      await sleep(1600);
-      if (isProcessing()) return true;
+      if (anyBtn.disabled) {
+        try { anyBtn.disabled = false; } catch (e) {}
+        try { anyBtn.removeAttribute("disabled"); } catch (e) {}
+        try { anyBtn.setAttribute("aria-disabled", "false"); } catch (e) {}
+      }
+      ok = await clickPayButton(anyBtn);
+      if (ok) return true;
     }
 
     const adyenBtns = Array.from(document.querySelectorAll(".adyen-checkout__button, button[type='submit'], input[type='submit']"));
     for (const b of adyenBtns) {
       if (b === anyBtn) continue;
-      if (b.disabled) b.disabled = false;
-      fireClick(b);
-      await sleep(900);
-      if (isProcessing()) return true;
+      if (b.disabled) {
+        try { b.disabled = false; } catch (e) {}
+        try { b.removeAttribute("disabled"); } catch (e) {}
+      }
+      ok = await clickPayButton(b);
+      if (ok) return true;
     }
 
     const forms = Array.from(document.querySelectorAll("form"));
     for (const f of forms) {
       try {
+        if (typeof f.requestSubmit === "function") {
+          try { f.requestSubmit(); await sleep(1500); if (isProcessing()) return true; } catch (e) {}
+        }
         f.dispatchEvent(new SubmitEvent("submit", { bubbles: true, cancelable: true }));
       } catch (e) {}
     }
@@ -1125,6 +1140,22 @@
 
     window.__nonoLog && window.__nonoLog("Pay click dead. Button inventory below 👇");
     logButtons();
+    return false;
+  }
+
+  async function clickPayButton(btn) {
+    if (!btn) return false;
+    try { btn.scrollIntoView({ block: "center", behavior: "instant" }); } catch (e) {}
+    fireClick(btn);
+    await sleep(1500);
+    if (isProcessing()) return true;
+    try {
+      if (btn.form && typeof btn.form.requestSubmit === "function") {
+        btn.form.requestSubmit(btn);
+        await sleep(1500);
+        if (isProcessing()) return true;
+      }
+    } catch (e) {}
     return false;
   }
 
