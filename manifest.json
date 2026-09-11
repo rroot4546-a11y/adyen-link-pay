@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Adyen Link Auto-Pay",
-  "version": "1.12.6",
+  "version": "1.12.7",
   "description": "Auto-fill, auto-submit, inbuilt modal auto-pay + checkoutshopper paste-to-pay — panel on any page with embedded Adyen + Stripe (hosted payment links / inbuilt Elements); Lab mode affirmation unlocks any host/page, proxy + UA rotation, Telegram hit bridge.",
   "permissions": [
     "storage",
