@@ -460,11 +460,11 @@ if (msg && actionIsTG(msg)) {
       const any = results.some((r) => r && r.any);
       const fields = results.reduce((acc, r) => {
         if (!r || !r.fields) return acc;
-        ['number', 'month', 'year', 'cvc'].forEach((f) => {
+        ['number', 'month', 'year', 'cvc', 'postal'].forEach((f) => {
           if (r.fields[f]) acc[f] = true;
         });
         return acc;
-      }, { number: false, month: false, year: false, cvc: false });
+      }, { number: false, month: false, year: false, cvc: false, postal: false });
       sendResponse({ results: results, any: any, fields: fields });
     }).catch((err) => {
       sendResponse({ error: String((err && err.message) || err), results: [] });
@@ -572,6 +572,26 @@ function injectFill(card) {
     el.dispatchEvent(new Event('blur', { bubbles: true }));
   }
 
+  const ZIP_BY_COUNTRY = {
+    US: '10001', GB: 'SW1A 1AA', AE: '00000', CA: 'K1A 0B1', AU: '2000',
+    DE: '10115', FR: '75001', SA: '11564', EG: '11511', IN: '110001',
+    MY: '50000', SG: '018906', NL: '1011', IT: '00100', ES: '28001',
+    SE: '111 57', CH: '8001', AT: '1010', BE: '1000', TR: '34418',
+    KW: '00000', QA: '00000', BH: '00000', OM: '00000', JO: '11118',
+    LB: '00000', IQ: '00000', IL: '00000', PK: '75500', BD: '1000',
+    ID: '10110', TH: '10210', VN: '70000', PH: '1000', JP: '100-0001',
+    KR: '04524', HK: '00000', TW: '100', NZ: '1010', IE: 'D01 F5R2',
+    ZA: '8001', NG: '100001', KE: '00100', BR: '01310-100', MX: '01000',
+    AR: 'C1000AAF', CL: '8320000', CO: '110111', PE: '15001', RU: '101000',
+    UA: '01001', PL: '00-001', CZ: '110 00', SK: '811 01', HU: '1051',
+    RO: '010011', BG: '1000', GR: '104 31', PT: '1100-320', DK: '1000',
+    NO: '0150', FI: '00100', IS: '101', HR: '10000', RS: '11000',
+    EE: '10111', LT: '01131', LV: 'LV-1050', CY: '1016', MT: 'VLT 1111',
+    LU: 'L-1111', MC: '98000', AD: 'AD500', SM: '47890'
+  };
+  const countryUp = String(card && card.country || '').trim().toUpperCase().slice(0, 2);
+  const fallbackZip = (card && (card.postal || card.zip)) || ZIP_BY_COUNTRY[countryUp] || ZIP_BY_COUNTRY.US;
+
   function typeValue(el, value) {
     const proto = el instanceof HTMLTextAreaElement
       ? HTMLTextAreaElement.prototype
@@ -617,7 +637,7 @@ function injectFill(card) {
     if (/(^|[^a-z0-9])(cc[-_]?exp[-_]?year|exp[-_]?year|expir(?:y|ation)[-_ ]*year|cardexpir(?:y|ation)?[-_]?year|expyear|encrypted\w*year)/i.test(s)) return 'year';
     if (/(^|[^a-z0-9])(cc[-_]?exp|exp[-_ ]?date|expdate|cardexpir(?:y|ation)?|expir(?:y|ation)([ -]?date)?|expiration\s*(date)?)/i.test(s)) return 'expiry';
     if (/(^|[^a-z0-9])(cvc|cvv|csc|security)[-_ ]*(code)?|cardcvc|cardcvcfront|security code|encryptedcvc/i.test(s)) return 'cvc';
-    if (/(^|[^a-z0-9])(postal[-_\s]*(code)?|zip[-_\s]*code|postalcode|zipcode|cc-zip)/i.test(s)) return 'postal';
+    if (/(^|[^a-z0-9])(postal[-_\s]*(code)?|zip[-_\s]*code|zipcode|zip|postalcode|cc-zip)/i.test(s)) return 'postal';
     if (/(^|[^a-z0-9])(cardholder|holder[-_\s]*name|cc[-_ ]name|name[-_\s]*on[-_\s]*card|card[-_\s]*holder)/i.test(s)) return 'holder';
     if (/(^|[^a-z0-9])(mail|email|e-mail)/i.test(s)) return 'email';
     return null;
@@ -626,6 +646,34 @@ function injectFill(card) {
   const fields = { number: false, month: false, year: false, cvc: false, expiry: false, postal: false, holder: false, email: false };
   let any = false;
   let cvcEl = null;
+
+  let effectiveCountry = countryUp;
+  let countrySel = null;
+  try {
+    const selects = Array.from(document.querySelectorAll('select'));
+    for (const sel of selects) {
+      const selSig = (sel.id + ' ' + sel.name + ' ' + (sel.getAttribute('aria-label') || '') + ' ' +
+        (sel.getAttribute('data-elements-stable-field-name') || '') + ' ' +
+        (sel.getAttribute('autocomplete') || '') + ' ' + String(sel.className || '')).toLowerCase();
+      if (!/(^|[^a-z0-9])(country|billingcountry|addresscountry)/i.test(selSig)) continue;
+      const opts = Array.from(sel.options || []);
+      const hasAlpha2 = opts.some(function (o) { return /^[A-Z]{2}$/.test((o.value || o.text || '').trim()); });
+      if (!hasAlpha2) continue;
+      if (!countrySel) countrySel = sel;
+      const cur = String(sel.value || '').trim().toUpperCase().slice(0, 2);
+      if (!effectiveCountry && /^[A-Z]{2}$/.test(cur)) effectiveCountry = cur;
+    }
+    if (countrySel && effectiveCountry) {
+      const want = effectiveCountry;
+      const opt = Array.from(countrySel.options || []).find(function (o) {
+        const v = String(o.value || o.text || '').trim().toUpperCase();
+        return /^[A-Z]{2}$/.test(v) && v === want;
+      });
+      if (opt && String(countrySel.value || '').trim().toUpperCase() !== want) setNativeValue(countrySel, opt.value);
+    }
+  } catch (e) {}
+  effectiveCountry = effectiveCountry || 'US';
+  const zipValue = (card && (card.postal || card.zip)) || ZIP_BY_COUNTRY[effectiveCountry] || ZIP_BY_COUNTRY.US;
 
   const inputs = Array.from(document.querySelectorAll('input'));
   for (const inp of inputs) {
@@ -649,9 +697,9 @@ function injectFill(card) {
       typeValue(inp, card.cvc || '');
       fields.cvc = true; any = true;
       cvcEl = inp;
-    } else if (kind === 'postal' && !fields.postal && card.postal) {
-      typeValue(inp, card.postal);
-      fields.postal = true;
+    } else if (kind === 'postal' && !fields.postal && zipValue) {
+      typeValue(inp, zipValue);
+      fields.postal = true; any = true;
     } else if (kind === 'holder' && !fields.holder) {
       setNativeValue(inp, card.holder || 'JOHN DOE');
       fields.holder = true;
@@ -684,11 +732,11 @@ function injectFill(card) {
     );
     if (c) { typeValue(c, card.cvc || ''); fields.cvc = true; any = true; cvcEl = c; }
   }
-  if (!fields.postal && card.postal) {
+  if (!fields.postal && zipValue) {
     const p = document.querySelector(
-      'input[autocomplete="postal-code"], input[name="postal"], input[id*="postal" i]'
+      'input[autocomplete="postal-code"], input[name="postal"], input[name="zip"], input[id*="postal" i], input[data-elements-stable-field-name="postalCode"]'
     );
-    if (p) { typeValue(p, card.postal); fields.postal = true; }
+    if (p) { typeValue(p, zipValue); fields.postal = true; any = true; }
   }
 
   if (cvcEl) {

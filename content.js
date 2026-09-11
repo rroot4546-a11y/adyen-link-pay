@@ -19,6 +19,7 @@
   let autoScheduled = false;
   let importedCombos = [];
   let currentComboIndex = 0;
+  let cardSourceMode = null;
   const combosKey = "adyenCombos";
   let comboListEl = null;
 
@@ -69,7 +70,7 @@
     });
   }
 
-  const VERSION = "1.12.3";
+  const VERSION = "1.12.4";
 
   function gateSessionUrl(rawUrl, lab) {
     const u = String(rawUrl || "");
@@ -444,6 +445,79 @@
     });
   }
 
+  const DEFAULT_ZIPS = {
+    US: "10001", GB: "SW1A 1AA", AE: "00000", CA: "K1A 0B1", AU: "2000",
+    DE: "10115", FR: "75001", SA: "11564", EG: "11511", IN: "110001",
+    MY: "50000", SG: "018906", NL: "1011", IT: "00100", ES: "28001",
+    SE: "111 57", CH: "8001", AT: "1010", BE: "1000", TR: "34418",
+    KW: "00000", QA: "00000", BH: "00000", OM: "00000", JO: "11118",
+    LB: "00000", IQ: "00000", IL: "00000", PK: "75500", BD: "1000",
+    ID: "10110", TH: "10210", VN: "70000", PH: "1000", JP: "100-0001",
+    KR: "04524", HK: "00000", TW: "100", NZ: "1010", IE: "D01 F5R2",
+    ZA: "8001", NG: "100001", KE: "00100", BR: "01310-100", MX: "01000",
+    AR: "C1000AAF", CL: "8320000", CO: "110111", PE: "15001", RU: "101000",
+    UA: "01001", PL: "00-001", CZ: "110 00", SK: "811 01", HU: "1051",
+    RO: "010011", BG: "1000", GR: "104 31", PT: "1100-320", DK: "1000",
+    NO: "0150", FI: "00100", IS: "101", HR: "10000", RS: "11000",
+    EE: "10111", LT: "01131", LV: "LV-1050", CY: "1016", MT: "VLT 1111",
+    LU: "L-1111", MC: "98000", AD: "AD500", SM: "47890", SO: "00000",
+    SD: "00000", YE: "00000", PS: "00000", AM: "0000", GE: "0100",
+    AZ: "AZ1000", KZ: "010000", BY: "220030", MD: "2001", AL: "1001",
+    MK: "1000", BA: "71000", ME: "81000", XK: "10000"
+  };
+
+  function normalizeCountry(c) {
+    return String(c || "").trim().toUpperCase().slice(0, 2);
+  }
+
+  function defaultZipFor(country) {
+    return DEFAULT_ZIPS[normalizeCountry(country)] || DEFAULT_ZIPS.US;
+  }
+
+  function isCountrySelect(el) {
+    if (!el || el.tagName !== "SELECT") return false;
+    const s = (el.id + " " + el.name + " " + (el.getAttribute("aria-label") || "") + " " +
+      (el.getAttribute("data-elements-stable-field-name") || "") + " " +
+      (el.getAttribute("autocomplete") || "") + " " + String(el.className || "")).toLowerCase();
+    if (!/(^|[^a-z0-9])(country|billingcountry|addresscountry)/i.test(s)) return false;
+    const opts = Array.from(el.options || []);
+    return opts.some((o) => /^[A-Z]{2}$/.test((o.value || o.text || "").trim()));
+  }
+
+  function resolveMode(cfg) {
+    if (cardSourceMode === "bin" || cardSourceMode === "combo") return cardSourceMode;
+    if (cfg && (cfg.mode === "bin" || cfg.mode === "combo")) return cfg.mode;
+    if ((cfg && cfg.combo) || importedCombos.length > 0) return "combo";
+    return "bin";
+  }
+
+  function hasCardSource(cfg) {
+    if (resolveMode(cfg) === "combo") return !!(cfg && cfg.combo) || importedCombos.length > 0;
+    return !!(cfg && cfg.bin);
+  }
+
+  function applyCardMode(mode) {
+    cardSourceMode = mode === "bin" ? "bin" : "combo";
+    const isBin = cardSourceMode === "bin";
+    const ids = { bin: "nono-bin", len: "nono-len", combo: "nono-combo", fileIn: "nono-file-input" };
+    const set = (id, disabled) => { const e = document.getElementById(id); if (e) e.disabled = disabled; };
+    set(ids.bin, !isBin);
+    set(ids.len, !isBin);
+    set(ids.combo, isBin);
+    set(ids.fileIn, isBin);
+    const dim = (id) => { const e = document.getElementById(id); if (e) e.style.opacity = isBin ? "0.35" : "1"; };
+    dim("nono-upload-btn");
+    dim("nono-clear-combos");
+    dim("nono-combo-count");
+    dim("nono-combo-list");
+    dim("nono-combo-wrap");
+    dim("nono-file-wrap");
+    const mb = document.getElementById("nono-mode-bin");
+    const mc = document.getElementById("nono-mode-combo");
+    if (mb) { mb.style.background = isBin ? "#00d1b2" : "#23303c"; mb.style.color = isBin ? "#00110d" : "#e6e6e6"; mb.style.fontWeight = isBin ? "800" : "700"; }
+    if (mc) { mc.style.background = isBin ? "#23303c" : "#00d1b2"; mc.style.color = isBin ? "#e6e6e6" : "#00110d"; mc.style.fontWeight = isBin ? "700" : "800"; }
+  }
+
   function setNativeValue(el, value) {
     const proto = el instanceof HTMLTextAreaElement
       ? HTMLTextAreaElement.prototype
@@ -503,7 +577,7 @@
     if (/(^|[^a-z0-9])(cc[-_]?exp[-_]?year|exp[-_]?year|expir(?:y|ation)[-_ ]*year|cardexpir(?:y|ation)?[-_]?year|expyear|encrypted\w*year)/i.test(s)) return "year";
     if (/(^|[^a-z0-9])(cc[-_]?exp|exp[-_ ]?date|expdate|cardexpir(?:y|ation)?|expir(?:y|ation)([ -]?date)?|expiration\s*(date)?)/i.test(s)) return "expiry";
     if (/(^|[^a-z0-9])(cvc|cvv|csc|security[-_\s]*(code)?|cardcvc|cardcid|encryptedcvc)/i.test(s)) return "cvc";
-    if (/(^|[^a-z0-9])(postal[-_\s]*(code)?|zip[-_\s]*code|postalcode|zipcode|cc-zip)/i.test(s)) return "postal";
+    if (/(^|[^a-z0-9])(postal[-_\s]*(code)?|zip[-_\s]*code|zipcode|zip|postalcode|cc-zip)/i.test(s)) return "postal";
     if (/(^|[^a-z0-9])(cardholder|holder[-_\s]*name|cc[-_ ]name|name[-_\s]*on[-_\s]*card|card[-_\s]*holder)/i.test(s)) return "holder";
     if (/(^|[^a-z0-9])(mail|email|e-mail)/i.test(s)) return "email";
     return null;
@@ -512,6 +586,28 @@
   function fillOwned(card) {
     const fields = { number: false, month: false, year: false, cvc: false, expiry: false, postal: false, holder: false, email: false };
     let any = false;
+
+    let effectiveCountry = normalizeCountry(card.country);
+    let countrySel = null;
+    const selects = Array.from(document.querySelectorAll("select"));
+    for (const sel of selects) {
+      if (!isCountrySelect(sel)) continue;
+      if (!countrySel) countrySel = sel;
+      const cur = normalizeCountry(sel.value || "");
+      if (!effectiveCountry && /^[A-Z]{2}$/.test(cur)) effectiveCountry = cur;
+    }
+    if (countrySel && effectiveCountry) {
+      const want = effectiveCountry;
+      const opt = Array.from(countrySel.options || []).find((o) => {
+        const v = String(o.value || o.text || "").trim().toUpperCase();
+        return /^[A-Z]{2}$/.test(v) && v === want;
+      });
+      if (opt && String(countrySel.value || "").trim().toUpperCase() !== want) {
+        setNativeValue(countrySel, opt.value);
+      }
+    }
+    effectiveCountry = effectiveCountry || "US";
+    const fallbackZip = card.postal || card.zip || defaultZipFor(effectiveCountry);
 
     const inputs = Array.from(document.querySelectorAll("input"));
     for (const inp of inputs) {
@@ -534,8 +630,8 @@
       } else if (kind === "cvc" && !fields.cvc) {
         typeValue(inp, card.cvc || "");
         fields.cvc = true; any = true;
-      } else if (kind === "postal" && !fields.postal && card.postal) {
-        typeValue(inp, card.postal);
+      } else if (kind === "postal" && !fields.postal && fallbackZip) {
+        typeValue(inp, fallbackZip);
         fields.postal = true; any = true;
       } else if (kind === "holder" && !fields.holder) {
         setNativeValue(inp, card.holder || "JOHN DOE");
@@ -563,9 +659,9 @@
       const c = document.querySelector('input[autocomplete="cc-csc"], input[autocomplete="cc-cvc"], input[name*="securityCode"], input[name="cvc"], input[data-elements-stable-field-name="cardCvc"]');
       if (c) { typeValue(c, card.cvc || ""); fields.cvc = true; any = true; }
     }
-    if (!fields.postal && card.postal) {
-      const p = document.querySelector('input[autocomplete="postal-code"], input[name="postal"], input[id*="postal" i]');
-      if (p) { typeValue(p, card.postal); fields.postal = true; }
+    if (!fields.postal && fallbackZip) {
+      const p = document.querySelector('input[autocomplete="postal-code"], input[name="postal"], input[name="zip"], input[id*="postal" i], input[data-elements-stable-field-name="postalCode"]');
+      if (p) { typeValue(p, fallbackZip); fields.postal = true; any = true; }
     }
 
     if (!fields.holder) {
@@ -1052,7 +1148,7 @@
         <div style="display:flex;align-items:center;gap:8px">
           <span style="font-size:16px">&#9889;</span>
           <b style="font-size:13px;letter-spacing:.5px">ADYEN AUTO-PAY</b>
-          <span id="nono-ver" style="font-size:9px;background:#00110d33;color:#00110d;padding:2px 6px;border-radius:8px">1.12.3</span>
+          <span id="nono-ver" style="font-size:9px;background:#00110d33;color:#00110d;padding:2px 6px;border-radius:8px">1.12.4</span>
         </div>
         <div style="display:flex;gap:6px">
           <button id="nono-dbg" title="Debug DOM" style="background:#00110d22;border:none;color:#00110d;cursor:pointer;width:22px;height:22px;border-radius:6px;font-size:10px;line-height:1;font-weight:700">DBG</button>
@@ -1061,7 +1157,11 @@
       </div>
 
       <div style="padding:12px;display:flex;flex-direction:column;gap:6px;overflow-y:auto;flex:1 1 auto;min-height:0">
-        <div style="display:flex;gap:6px">
+        <div style="display:flex;gap:4px;margin-bottom:2px">
+          <button id="nono-mode-bin" type="button" style="flex:1;padding:7px;background:#00d1b2;color:#00110d;border:none;border-radius:7px;font-size:11px;font-weight:800;cursor:pointer">BIN</button>
+          <button id="nono-mode-combo" type="button" style="flex:1;padding:7px;background:#23303c;color:#e6e6e6;border:none;border-radius:7px;font-size:11px;font-weight:700;cursor:pointer">COMBO</button>
+        </div>
+        <div id="nono-bin-wrap" style="display:flex;gap:6px">
           <div style="flex:1">
             <label style="font-size:9px;text-transform:uppercase;color:#6b7b8d">Custom BIN</label>
             <input id="nono-bin" type="text" placeholder="4400661989645" maxlength="19" inputmode="numeric"
@@ -1079,15 +1179,32 @@
         </div>
         <div id="nono-bin-spec" style="font-size:10px;color:#6b7b8d;min-height:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">type a BIN to auto-detect brand/length/CVC</div>
 
-        <div style="display:flex;gap:6px;align-items:flex-end">
+        <div id="nono-combo-wrap" style="display:flex;gap:6px;align-items:flex-end">
           <div style="flex:1">
-            <label style="font-size:9px;text-transform:uppercase;color:#6b7b8d">Or Full Combo</label>
-            <input id="nono-combo" type="text" placeholder="number|mm|yyyy|cvc" inputmode="numeric"
+            <label style="font-size:9px;text-transform:uppercase;color:#6b7b8d">Full Combo</label>
+            <input id="nono-combo" type="text" placeholder="number|mm|yyyy|cvc|zip" inputmode="numeric"
               style="width:100%;box-sizing:border-box;padding:8px;background:#131a22;color:#e6e6e6;border:1px solid #23303c;border-radius:8px;font-size:13px;outline:none">
           </div>
           <div style="width:88px">
             <label style="font-size:9px;text-transform:uppercase;color:#6b7b8d">Holder</label>
             <input id="nono-holder" type="text" placeholder="JOHN DOE" style="width:100%;box-sizing:border-box;padding:8px;background:#131a22;color:#e6e6e6;border:1px solid #23303c;border-radius:8px;font-size:12px;outline:none">
+          </div>
+        </div>
+
+        <div id="nono-addr-wrap" style="display:flex;gap:6px">
+          <div style="width:64px">
+            <label style="font-size:9px;text-transform:uppercase;color:#6b7b8d">Country</label>
+            <input id="nono-country" type="text" placeholder="US" maxlength="2" autocomplete="country-name"
+              style="width:100%;box-sizing:border-box;padding:8px;background:#131a22;color:#e6e6e6;border:1px solid #23303c;border-radius:8px;font-size:13px;outline:none;text-transform:uppercase">
+          </div>
+          <div style="flex:1">
+            <label style="font-size:9px;text-transform:uppercase;color:#6b7b8d">Zip</label>
+            <input id="nono-postal" type="text" placeholder="auto by country" autocomplete="postal-code"
+              style="width:100%;box-sizing:border-box;padding:8px;background:#131a22;color:#e6e6e6;border:1px solid #23303c;border-radius:8px;font-size:13px;outline:none">
+          </div>
+          <div style="width:88px">
+            <label style="font-size:9px;text-transform:uppercase;color:#6b7b8d">Email</label>
+            <input id="nono-email" type="email" placeholder="auto" style="width:100%;box-sizing:border-box;padding:8px;background:#131a22;color:#e6e6e6;border:1px solid #23303c;border-radius:8px;font-size:12px;outline:none">
           </div>
         </div>
 
@@ -1257,10 +1374,13 @@
 
     function savePanelState() {
       const cfg = {
+        mode: cardSourceMode === "bin" ? "bin" : "combo",
         bin: el("#nono-bin").value.trim(),
         combo: el("#nono-combo").value.trim(),
         holder: el("#nono-holder").value.trim(),
         email: el("#nono-email") ? el("#nono-email").value.trim() : "",
+        country: el("#nono-country") ? el("#nono-country").value.trim().toUpperCase().slice(0, 2) : "",
+        postal: el("#nono-postal") ? el("#nono-postal").value.trim() : "",
         stripeUrl: el("#nono-stripe-url") ? el("#nono-stripe-url").value.trim() : "",
         cardLength: parseInt(el("#nono-len").value, 10) || 0,
         autoSubmit: el("#nono-autosubmit").checked,
@@ -1334,10 +1454,31 @@
       updateBinSpecLocal();
       savePanelState();
     });
+    el("#nono-bin").addEventListener("focus", () => {
+      if (cardSourceMode !== "bin") { applyCardMode("bin"); savePanelState(); logMsg("BIN mode — combo stopped, Chief."); }
+    });
     el("#nono-len").addEventListener("change", () => { updateBinSpecLocal(); savePanelState(); });
-    el("#nono-combo").addEventListener("input", savePanelState);
+    el("#nono-combo").addEventListener("input", () => {
+      if (cardSourceMode !== "combo") { applyCardMode("combo"); savePanelState(); }
+      savePanelState();
+    });
+    el("#nono-combo").addEventListener("focus", () => {
+      if (cardSourceMode !== "combo") { applyCardMode("combo"); savePanelState(); logMsg("COMBO mode — BIN stopped, Chief."); }
+    });
     el("#nono-holder").addEventListener("input", savePanelState);
+    el("#nono-country").addEventListener("input", savePanelState);
+    el("#nono-postal").addEventListener("input", savePanelState);
     el("#nono-email").addEventListener("input", savePanelState);
+    el("#nono-mode-bin").addEventListener("click", () => {
+      applyCardMode("bin");
+      savePanelState();
+      logMsg("BIN mode — combo stopped, Chief.");
+    });
+    el("#nono-mode-combo").addEventListener("click", () => {
+      applyCardMode("combo");
+      savePanelState();
+      logMsg("COMBO mode — BIN stopped, Chief.");
+    });
     el("#nono-stripe-url").addEventListener("input", savePanelState);
     el("#nono-autosubmit").addEventListener("change", savePanelState);
     el("#nono-autoonload").addEventListener("change", savePanelState);
@@ -1374,7 +1515,8 @@
             number: (parts[0] || "").replace(/\s/g, ""),
             month: parts[1] || "",
             year: parts[2] || "",
-            cvc: parts[3] || ""
+            cvc: parts[3] || "",
+            zip: parts[4] || ""
           };
         }).filter(c => c.number && c.month && c.year && c.cvc);
 
@@ -1382,6 +1524,11 @@
         saveCombos();
         updateComboList();
         el("#nono-combo-count").textContent = importedCombos.length + " combos";
+
+        if (cardSourceMode !== "combo") {
+          applyCardMode("combo");
+          savePanelState();
+        }
 
         if (importedCombos.length > 0) {
           logMsg("Loaded " + importedCombos.length + " combos");
@@ -1480,7 +1627,7 @@
       }
 
       const cfg = await getConfig();
-      const hasCard = (cfg && (cfg.combo || cfg.bin)) || importedCombos.length > 0;
+      const hasCard = hasCardSource(cfg);
       if (!hasCard) {
         logMsg("Give me a BIN, combo, or combo file first, Chief.");
         return;
@@ -1515,19 +1662,22 @@
         if (ua && ua.label) logMsg("UA: " + ua.label);
 
         let card;
-        if (importedCombos.length > 0) {
+        const imode = resolveMode(cfg);
+        if (imode === "combo" && importedCombos.length > 0) {
           const combo = importedCombos[currentComboIndex];
-          card = { number: combo.number, month: combo.month, year: combo.year, cvc: combo.cvc, holder: (cfg && cfg.holder) || "JOHN DOE" };
+          card = { number: combo.number, month: combo.month, year: combo.year, cvc: combo.cvc, zip: combo.zip || "", holder: (cfg && cfg.holder) || "JOHN DOE", country: (cfg && cfg.country) || "" };
           currentComboIndex = (currentComboIndex + 1) % importedCombos.length;
           saveCombos();
-        } else if (cfg && cfg.combo) {
+        } else if (imode === "combo" && cfg && cfg.combo) {
           const p = parseCombo(cfg.combo);
-          card = { number: p.number, month: p.month, year: p.year, cvc: p.cvc, holder: cfg.holder || "JOHN DOE" };
-        } else if (window.CardGen && cfg && cfg.bin) {
+          card = { number: p.number, month: p.month, year: p.year, cvc: p.cvc, zip: p.zip || "", holder: cfg.holder || "JOHN DOE", country: cfg.country || "" };
+        } else if (imode === "bin" && window.CardGen && cfg && cfg.bin) {
           card = window.CardGen.genCard(cfg.bin.replace(/\s/g, ""), { length: cfg.cardLength || 0 });
           card.holder = cfg.holder || "JOHN DOE";
           card.month = card.expiryMonth;
           card.year = card.expiryYear;
+          card.zip = (cfg && cfg.postal) ? cfg.postal : "";
+          card.country = (cfg && cfg.country) || "";
         } else {
           logMsg("No usable card source — BIN or combo required.");
           return;
@@ -1678,7 +1828,7 @@
       if (csRunning || running) return;
       const cfg = await getConfig();
       if (!force && !(cfg && cfg.autoInbuilt)) return;
-      if (!(cfg && (cfg.combo || cfg.bin))) {
+      if (!hasCardSource(cfg)) {
         if (force) inbuiltSet("need BIN/combo", "#ffd166");
         return;
       }
@@ -1735,7 +1885,7 @@
       if (running || csRunning) return;
       const cfg = await getConfig();
       if (!force && !(cfg && cfg.autoStripe)) return;
-      if (!(cfg && (cfg.combo || cfg.bin))) return;
+      if (!hasCardSource(cfg)) return;
       if (!stripeUISignal()) {
         stripeSet(force ? "no stripe ui here" : "", force ? "#ffd166" : "#8fa3b5");
         return;
@@ -1834,7 +1984,7 @@
         const sess = parseCheckshopper(txt);
         if (!sess || !sess.payUrl) return;
         const cfg = await getConfig();
-        if (!(cfg && (cfg.combo || cfg.bin)) && importedCombos.length === 0) {
+        if (!hasCardSource(cfg)) {
           csSet("need BIN/combo/file", "#ffd166");
           logMsg("Auto-pay armed — add a BIN, combo, or combo file above and it pays by itself.");
           return;
@@ -1857,8 +2007,13 @@
       }
       const bin = el("#nono-bin").value.trim();
       const combo = el("#nono-combo").value.trim();
-      if (!bin && !combo && importedCombos.length === 0) {
-        logMsg("Give me a BIN, combo, or combo file first, Chief.");
+      const mode = resolveMode({ bin: bin, combo: combo, mode: cardSourceMode });
+      if (mode === "combo" && !combo && importedCombos.length === 0) {
+        logMsg("COMBO mode — give me a combo or combo file first, Chief.");
+        return;
+      }
+      if (mode === "bin" && !bin) {
+        logMsg("BIN mode — give me a BIN first, Chief.");
         return;
       }
         savePanelState();
@@ -1881,7 +2036,7 @@
 
   function parseCombo(combo) {
     const parts = combo.split("|").map((s) => s.trim());
-    return { number: (parts[0] || "").replace(/\s/g, ""), month: parts[1] || "", year: parts[2] || "", cvc: parts[3] || "" };
+    return { number: (parts[0] || "").replace(/\s/g, ""), month: parts[1] || "", year: parts[2] || "", cvc: parts[3] || "", zip: parts[4] || "" };
   }
 
   async function fillRound(card) {
@@ -1919,20 +2074,34 @@
       }
 
       let card;
-      if (importedCombos.length > 0) {
-        const combo = importedCombos[currentComboIndex];
-        card = { number: combo.number, month: combo.month, year: combo.year, cvc: combo.cvc, holder: cfg.holder || "JOHN DOE" };
-        currentComboIndex = (currentComboIndex + 1) % importedCombos.length;
-        saveCombos();
-      } else if (cfg.combo) {
-        const p = parseCombo(cfg.combo);
-        card = { number: p.number, month: p.month, year: p.year, cvc: p.cvc, holder: cfg.holder || "JOHN DOE" };
-        card.email = cfg.email || randomEmail();
+      const mode = resolveMode(cfg);
+      if (mode === "combo") {
+        if (importedCombos.length > 0) {
+          const combo = importedCombos[currentComboIndex];
+          card = { number: combo.number, month: combo.month, year: combo.year, cvc: combo.cvc, zip: combo.zip || "", holder: cfg.holder || "JOHN DOE", country: cfg.country || "" };
+          currentComboIndex = (currentComboIndex + 1) % importedCombos.length;
+          saveCombos();
+        } else if (cfg.combo) {
+          const p = parseCombo(cfg.combo);
+          card = { number: p.number, month: p.month, year: p.year, cvc: p.cvc, zip: p.zip || "", holder: cfg.holder || "JOHN DOE", country: cfg.country || "" };
+          card.email = cfg.email || randomEmail();
+        } else {
+          stopRequested = true;
+          window.__nonoLog && window.__nonoLog("COMBO mode — give me a combo or combo file, Chief.");
+          break;
+        }
       } else {
+        if (!cfg.bin) {
+          stopRequested = true;
+          window.__nonoLog && window.__nonoLog("BIN mode — give me a BIN first, Chief.");
+          break;
+        }
         card = window.CardGen.genCard(cfg.bin.replace(/\s/g, ""), { length: cfg.cardLength || 0 });
         card.holder = cfg.holder || "JOHN DOE";
         card.month = card.expiryMonth;
         card.year = card.expiryYear;
+        card.zip = cfg.postal || "";
+        card.country = cfg.country || "";
         card.email = cfg.email || randomEmail();
       }
       pendingCard = card;
@@ -2082,8 +2251,8 @@
     if (comboCountEl) comboCountEl.textContent = importedCombos.length + " combos";
     const cfg = await getConfig();
     if (cfg) {
-      const ids = ["nono-bin", "nono-combo", "nono-holder", "nono-email", "nono-stripe-url", "nono-len", "nono-autosubmit", "nono-autoonload"];
-      const vals = [cfg.bin || "", cfg.combo || "", cfg.holder || "", cfg.email || "", cfg.stripeUrl || "", String(cfg.cardLength || 0), !!cfg.autoSubmit, !!cfg.autoOnLoad];
+      const ids = ["nono-bin", "nono-combo", "nono-holder", "nono-email", "nono-country", "nono-postal", "nono-stripe-url", "nono-len", "nono-autosubmit", "nono-autoonload"];
+      const vals = [cfg.bin || "", cfg.combo || "", cfg.holder || "", cfg.email || "", cfg.country || "", cfg.postal || "", cfg.stripeUrl || "", String(cfg.cardLength || 0), !!cfg.autoSubmit, !!cfg.autoOnLoad];
       ids.forEach((id, i) => {
         const e = document.getElementById(id);
         if (e) {
@@ -2091,6 +2260,7 @@
           else e.value = vals[i];
         }
       });
+      applyCardMode(resolveMode(cfg));
       if (document.getElementById("nono-bin-spec")) updateBinSpec();
       const ib = document.getElementById("nono-autoinbuilt");
       if (ib) ib.checked = !!cfg.autoInbuilt;
@@ -2103,7 +2273,7 @@
           if (st) { st.textContent = "pending — hitting…"; st.style.color = "#635bff"; }
           setTimeout(async () => {
             const cfg2 = await getConfig();
-            if (!(cfg2 && (cfg2.combo || cfg2.bin))) {
+            if (!hasCardSource(cfg2)) {
               if (st) st.textContent = "need BIN/combo on the panel";
               logMsg("Stripe link open — fill the card inputs above then hit START / OPEN + HIT, Chief.");
               return;
