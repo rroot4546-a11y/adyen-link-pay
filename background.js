@@ -29,6 +29,16 @@ const ADYEN_PATTERNS = [
   '*://*.adyen.com/*/sessions/*'
 ];
 
+const STRIPE_PATTERNS = [
+  '*://api.stripe.com/*',
+  '*://checkout.stripe.com/*',
+  '*://js.stripe.com/*',
+  '*://pay.stripe.com/*',
+  '*://*.stripe.com/*'
+];
+
+const CAPTURE_PATTERNS = ADYEN_PATTERNS.concat(STRIPE_PATTERNS);
+
 const MAX_STORED = 50;
 let captured = [];
 let capturedResponses = [];
@@ -50,7 +60,7 @@ const DEFAULT_UAS = [
   "Mozilla/5.0 (X11; Linux x86_64; rv:130.0) Gecko/20100101 Firefox/130.0"
 ];
 
-const RESP_RE = /checkoutshopper.*\/(payments|sessions|submit|result)(\?|$)/;
+const RESP_RE = /(checkoutshopper.*\/(payments|sessions|submit|result)(\?|$)|\/v1\/(payment_?intents|setup_?intents|payment_?methods|payment_?pages)\b|(confirm|pay|submit|paymentlinks)\/(confirm|pay)|api\.stripe\.com)/;
 
 chrome.webRequest.onBeforeRequest.addListener(
   (details) => {
@@ -83,7 +93,7 @@ chrome.webRequest.onBeforeRequest.addListener(
       } catch (e) {}
     }
   },
-  { urls: ADYEN_PATTERNS },
+  { urls: CAPTURE_PATTERNS },
   ['requestBody']
 );
 
@@ -93,7 +103,7 @@ chrome.webRequest.onBeforeSendHeaders.addListener(
     if (!req) return;
     req.requestHeaders = details.requestHeaders || [];
   },
-  { urls: ADYEN_PATTERNS },
+  { urls: CAPTURE_PATTERNS },
   ['requestHeaders', 'extraHeaders']
 );
 
@@ -106,7 +116,15 @@ chrome.webRequest.onCompleted.addListener(
     pending.delete(details.requestId);
 
     const isInteresting = req.body &&
-      (req.body.includes('sessionData') || req.body.includes('paymentMethod') || req.body.includes('card'));
+      (/adyen\.com/.test(req.url)
+        ? (req.body.includes('sessionData') || req.body.includes('paymentMethod') || req.body.includes('card'))
+        : (/stripe\.com/.test(req.url) && (
+            req.body.includes('payment_method') ||
+            req.body.includes('payment_intent') ||
+            req.body.includes('client_secret') ||
+            req.body.includes('card') ||
+            req.body.includes('payment_link')
+          )));
 
     if (!isInteresting) return;
 
@@ -125,16 +143,16 @@ chrome.webRequest.onCompleted.addListener(
     chrome.notifications.create({
       type: 'basic',
       iconUrl: 'icons/icon48.png',
-      title: 'Adyen Request Captured',
+      title: /stripe\.com/.test(req.url) ? 'Stripe Request Captured' : 'Adyen Request Captured',
       message: req.method + ' ' + truncateUrl(req.url)
     }, () => {});
   },
-  { urls: ADYEN_PATTERNS }
+  { urls: CAPTURE_PATTERNS }
 );
 
 chrome.webRequest.onErrorOccurred.addListener(
   (details) => pending.delete(details.requestId),
-  { urls: ADYEN_PATTERNS }
+  { urls: CAPTURE_PATTERNS }
 );
 
 chrome.tabs.onRemoved.addListener((tabId) => {
@@ -196,9 +214,10 @@ function emitCapturedResponse(tabId, url, body) {
   const rec = { url: url.slice(0, 220), body: body, at: Date.now() };
   capturedResponses.unshift(rec);
   if (capturedResponses.length > 80) capturedResponses.pop();
-  chrome.storage.local.set({ nono_resp: rec });
+  const isStripe = /stripe\.com/.test(String(url || ""));
+  chrome.storage.local.set(isStripe ? { stripe_resp: rec } : { nono_resp: rec });
   chrome.runtime.sendMessage({
-    type: "ADYEN_RESPONSE_CAPTURED",
+    type: isStripe ? "STRIPE_RESPONSE_CAPTURED" : "ADYEN_RESPONSE_CAPTURED",
     resp: rec
   }).catch(() => {});
 }
@@ -318,6 +337,59 @@ if (msg && actionIsTG(msg)) {
     sendResponse({ captured });
     return true;
   }
+  if (msg && msg.action === 'INBUILT_SESSION') {
+    let found = { sessionId: "", clientKey: "", sessionData: "", payUrl: "", origin: "", rawUrl: "" };
+    for (const r of capturedResponses) {
+      const u = String(r.url || "");
+      if (!/\/sessions\//.test(u)) continue;
+      let j = null;
+      try { j = JSON.parse(r.body); } catch (e) {}
+      const sd = (j && (j.sessionData || (j.session && j.session.sessionData))) || "";
+      if (!sd) continue;
+      const sm = u.match(/\/sessions\/([A-Za-z0-9_-]+)/);
+      if (!sm) continue;
+      let ck = "";
+      let origin = "";
+      try {
+        const U = new URL(u);
+        ck = U.searchParams.get("clientKey") || "";
+        origin = U.origin;
+      } catch (e) {}
+      ck = ck || (j && j.clientKey) || "";
+      found.sessionId = sm[1];
+      found.sessionData = sd;
+      found.clientKey = ck;
+      found.origin = origin;
+      found.rawUrl = u;
+      found.payUrl = origin
+        ? origin + "/checkoutshopper/v1/sessions/" + found.sessionId + "/payments" +
+          (ck ? "?clientKey=" + encodeURIComponent(ck) : "")
+        : u;
+      break;
+    }
+    if (!found.sessionId) {
+      for (const c of captured) {
+        const u = String(c.url || "");
+        const sm = u.match(/\/sessions\/([A-Za-z0-9_-]+)/);
+        if (!sm) continue;
+        let j = null;
+        try { j = JSON.parse(c.body || ""); } catch (e) {}
+        let ck = (j && j.clientKey) || "";
+        if (!ck) { try { ck = new URL(u).searchParams.get("clientKey") || ""; } catch (e) {} }
+        found.sessionId = sm[1];
+        found.clientKey = ck;
+        try { found.origin = new URL(u).origin; } catch (e) {}
+        found.rawUrl = u;
+        found.payUrl = found.origin
+          ? found.origin + "/checkoutshopper/v1/sessions/" + found.sessionId + "/payments" +
+            (ck ? "?clientKey=" + encodeURIComponent(ck) : "")
+          : u;
+        break;
+      }
+    }
+    sendResponse(Object.assign({ found: !!(found.sessionData && found.payUrl) }, found));
+    return true;
+  }
   if (msg && msg.action === 'GET_SESSION') {
     const id = String(msg.sessionId || "");
     const want = String(msg.url || "").split("?")[0];
@@ -359,6 +431,18 @@ if (msg && actionIsTG(msg)) {
     sendResponse({ ok: true });
     return true;
   }
+  if (msg && msg.action === 'STRIPE_OPEN') {
+    const raw = String(msg.url || '').trim();
+    const url = /^https?:/i.test(raw) ? raw : 'https://' + raw;
+    if (!/^https?:\/\/(buy|checkout|pay|m)\.stripe\.(com|network)\//i.test(url)) {
+      sendResponse({ ok: false, error: 'not a stripe payment link' });
+      return true;
+    }
+    chrome.tabs.create({ url: url, active: true }, (t) => {
+      sendResponse({ ok: true, tabId: t && t.id });
+    });
+    return true;
+  }
   if (msg && msg.action === 'FF_EXEC') {
     const tabId = sender && sender.tab && sender.tab.id;
     if (!tabId) {
@@ -387,7 +471,91 @@ if (msg && actionIsTG(msg)) {
     });
     return true;
   }
+  if (msg && msg.action === 'FF_PAY') {
+    const tabId = sender && sender.tab && sender.tab.id;
+    if (!tabId) {
+      sendResponse({ error: 'no-tab', clicked: [], detected: false, submitting: false });
+      return true;
+    }
+    chrome.scripting.executeScript({
+      target: { tabId: tabId, allFrames: true },
+      func: attemptPay
+    }).then((res) => {
+      const list = (res || []).map((r) => r.result).filter(Boolean);
+      sendResponse({
+        clicked: list.reduce((a, r) => a.concat((r && r.clicked) || []), []),
+        detected: list.some((r) => r && r.detected),
+        submitting: list.some((r) => r && r.submitting)
+      });
+    }).catch((err) => {
+      sendResponse({ error: String((err && err.message) || err), clicked: [], detected: false, submitting: false });
+    });
+    return true;
+  }
 });
+
+function attemptPay() {
+  const out = { clicked: [], detected: false, submitting: false };
+  function walkAll(root) {
+    const out = [];
+    const seen = new Set();
+    (function walk(node) {
+      if (!node) return;
+      if (seen.has(node)) return;
+      seen.add(node);
+      if (node.nodeType === 1 || node.nodeType === 9 || node.shadowRoot) {
+        let kids = [];
+        if (node.nodeType === 9) kids = kids.concat(Array.from(node.children));
+        else {
+          if (node.shadowRoot) kids = kids.concat(Array.from(node.shadowRoot.children));
+          kids = kids.concat(Array.from(node.children));
+        }
+        for (const k of kids) walk(k);
+        if (node.nodeType === 1) out.push(node);
+      }
+    })(root);
+    return out;
+  }
+  const els = walkAll(document);
+  const candidates = [];
+  for (const b of els) {
+    if (!b.matches) continue;
+    if (!b.matches("button, [role='button'], input[type='submit'], input[type='button'], a")) continue;
+    const rect = b.getBoundingClientRect();
+    if (!rect.width && !rect.height) continue;
+    const label = ((b.innerText || b.value || b.getAttribute('aria-label') || '') + ' ' +
+      (b.getAttribute('data-testid') || '') + ' ' + (b.id || '') + ' ' +
+      (typeof b.className === 'string' ? b.className : '')).trim();
+    const l = label.toLowerCase();
+    const isSubmit = b.type === 'submit' ||
+      b.matches("button[type='submit']") ||
+      /pay|submit|confirm|place order|continue|complete purchase|pay \$/.test(l) ||
+      /pay-button|submit|adyen-checkout__button/.test(l);
+    if (isSubmit && !b.disabled) candidates.push(b);
+  }
+  for (const b of candidates) {
+    try { b.scrollIntoView({ block: 'center' }); } catch (e) {}
+    try { b.focus({ preventScroll: true }); } catch (e) {}
+    const opts = { bubbles: true, cancelable: true, view: window, button: 0 };
+    ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click'].forEach((t) => {
+      try {
+        const Ctor = t.indexOf('pointer') === 0 ? PointerEvent : MouseEvent;
+        b.dispatchEvent(new Ctor(t, opts));
+      } catch (e) {
+        try { b.dispatchEvent(new MouseEvent(t, { bubbles: true, cancelable: true })); } catch (e2) {}
+      }
+    });
+    try { b.click(); } catch (e) {}
+    out.clicked.push(((b.innerText || b.value || 'btn').trim() || 'btn').slice(0, 24));
+  }
+  const html = document.documentElement ? document.documentElement.innerHTML : '';
+  const body = document.body ? document.body.innerText : '';
+  out.submitting = /processing|please wait|connecting|spinner|thanks|redirecting/.test(
+    html.toLowerCase() + (body || '').toLowerCase().slice(0, 800)
+  );
+  out.detected = candidates.length > 0;
+  return out;
+}
 
 function injectFill(card) {
   function setNativeValue(el, value) {
@@ -439,13 +607,15 @@ function injectFill(card) {
   function classify(el) {
     const s = ((el.id || '') + ' ' + (el.name || '') + ' ' +
       (el.getAttribute('aria-label') || '') + ' ' +
+      (el.getAttribute('placeholder') || '') + ' ' +
       (el.getAttribute('data-fieldtype') || '') + ' ' +
+      (el.getAttribute('data-elements-stable-field-name') || '') + ' ' +
       (el.getAttribute('autocomplete') || '') + ' ' +
       (typeof el.className === 'string' ? el.className : '')).toLowerCase();
-    if (/(card\s*[-_ ]*number|ccnum|cc[-_ ]number|\bpan\b|encrypted\w*(number|pan))/.test(s)) return 'number';
-    if (/(expiry|expiration)[-_ ]*(month)?|encrypted\w*month|expmonth/.test(s) && !/year/.test(s)) return 'month';
-    if (/(expiry|expiration)[-_ ]*year|encrypted\w*year|expyear/.test(s) || (/exp/.test(s) && /year/.test(s))) return 'year';
-    if (/(cvc|cvv|csc|security)[-_ ]*(code)?/.test(s)) return 'cvc';
+    if (/(card\s*[-_ ]*number|cardnumber|ccnum|cc[-_ ]number|\bpan\b|enter your card number|encrypted\w*(number|pan))/.test(s)) return 'number';
+    if (/(expiry|expiration)[-_ ]*(month)?|cardexpiry(month)?|encrypted\w*month|expmonth/.test(s) && !/year/.test(s)) return 'month';
+    if (/(expiry|expiration)[-_ ]*year|cardexpiryyear|encrypted\w*year|expyear/.test(s) || (/exp/.test(s) && /year/.test(s))) return 'year';
+    if (/(cvc|cvv|csc|security)[-_ ]*(code)?|cardcvc|cardcvcfront|security code|encryptedcvc/.test(s)) return 'cvc';
     return null;
   }
 
@@ -524,7 +694,10 @@ function injectResponseHook() {
   if (window.__nonohooked) return;
   window.__nonohooked = true;
 
-  const isAdyen = (url) => /checkoutshopper.*\/(payments|sessions|submit)(\?|$)/.test(url);
+  const isInteresting = (url) =>
+    /checkoutshopper.*\/(payments|sessions|submit|result)(\?|$)/.test(url) ||
+    /api\.stripe\.com\/(v1\/)?(payment_?intents|setup_?intents|payment_?methods|payment_?pages|paymentlinks|checkout\b|sessions)|(confirm|pay|submit)/.test(url) ||
+    /(checkout|pay)\.stripe\.com.*(confirm|pay|submit)/.test(url);
 
   const push = (data) => {
     try {
@@ -546,7 +719,7 @@ function injectResponseHook() {
         x.addEventListener('load', function () {
           try {
             const u = String(x.__nurl || '');
-            if (isAdyen(u)) {
+            if (isInteresting(u)) {
               push({ kind: 'xhr', url: u, status: x.status, body: x.responseText || '' });
             }
           } catch (e) {}
@@ -565,7 +738,7 @@ function injectResponseHook() {
           ? input
           : (input && input.url ? input.url : '');
         const p = OF.apply(this, arguments);
-        if (isAdyen(url)) {
+        if (isInteresting(url)) {
           p.then((res) => {
             try {
               const clone = res.clone();
