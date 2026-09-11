@@ -50,6 +50,7 @@
 
   function hostAllowed(u, lab) {
     const h = String(u || "").toLowerCase();
+    if (lab) return true;
     if (/(^|\.)adyen\.(com|link)/.test(h)) {
       return lab || /checkoutshopper-test\.adyen\.com/.test(h);
     }
