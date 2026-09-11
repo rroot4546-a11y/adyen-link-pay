@@ -612,14 +612,18 @@ function injectFill(card) {
       (el.getAttribute('data-elements-stable-field-name') || '') + ' ' +
       (el.getAttribute('autocomplete') || '') + ' ' +
       (typeof el.className === 'string' ? el.className : '')).toLowerCase();
-    if (/(card\s*[-_ ]*number|cardnumber|ccnum|cc[-_ ]number|\bpan\b|enter your card number|encrypted\w*(number|pan))/.test(s)) return 'number';
-    if (/(expiry|expiration)[-_ ]*(month)?|cardexpiry(month)?|encrypted\w*month|expmonth/.test(s) && !/year/.test(s)) return 'month';
-    if (/(expiry|expiration)[-_ ]*year|cardexpiryyear|encrypted\w*year|expyear/.test(s) || (/exp/.test(s) && /year/.test(s))) return 'year';
-    if (/(cvc|cvv|csc|security)[-_ ]*(code)?|cardcvc|cardcvcfront|security code|encryptedcvc/.test(s)) return 'cvc';
+    if (/(^|[^a-z0-9])(card\s*[-_]?\s*number|cardnumber|cc[-_ ]?number|ccnum|pan|enter your card number|encrypted\w*(number|pan))/i.test(s)) return 'number';
+    if (/(^|[^a-z0-9])(cc[-_]?exp[-_]?month|exp[-_]?month|expir(?:y|ation)[-_ ]*month|cardexpir(?:y|ation)?[-_]?month|expmonth|encrypted\w*month)/i.test(s)) return 'month';
+    if (/(^|[^a-z0-9])(cc[-_]?exp[-_]?year|exp[-_]?year|expir(?:y|ation)[-_ ]*year|cardexpir(?:y|ation)?[-_]?year|expyear|encrypted\w*year)/i.test(s)) return 'year';
+    if (/(^|[^a-z0-9])(cc[-_]?exp|exp[-_ ]?date|expdate|cardexpir(?:y|ation)?|expir(?:y|ation)([ -]?date)?|expiration\s*(date)?)/i.test(s)) return 'expiry';
+    if (/(^|[^a-z0-9])(cvc|cvv|csc|security)[-_ ]*(code)?|cardcvc|cardcvcfront|security code|encryptedcvc/i.test(s)) return 'cvc';
+    if (/(^|[^a-z0-9])(postal[-_\s]*(code)?|zip[-_\s]*code|postalcode|zipcode|cc-zip)/i.test(s)) return 'postal';
+    if (/(^|[^a-z0-9])(cardholder|holder[-_\s]*name|cc[-_ ]name|name[-_\s]*on[-_\s]*card|card[-_\s]*holder)/i.test(s)) return 'holder';
+    if (/(^|[^a-z0-9])(mail|email|e-mail)/i.test(s)) return 'email';
     return null;
   }
 
-  const fields = { number: false, month: false, year: false, cvc: false };
+  const fields = { number: false, month: false, year: false, cvc: false, expiry: false, postal: false, holder: false, email: false };
   let any = false;
   let cvcEl = null;
 
@@ -631,6 +635,10 @@ function injectFill(card) {
     if (kind === 'number' && !fields.number) {
       typeValue(inp, card.number || '');
       fields.number = true; any = true;
+    } else if (kind === 'expiry' && !fields.expiry && !fields.month && !fields.year) {
+      typeValue(inp, String(card.month || card.expiryMonth || '12').padStart(2, '0') + '/' +
+        String(card.year || card.expiryYear || '2029').slice(-2));
+      fields.expiry = true; fields.month = true; fields.year = true; any = true;
     } else if (kind === 'month' && !fields.month) {
       typeValue(inp, String(card.month || card.expiryMonth || '12').padStart(2, '0'));
       fields.month = true; any = true;
@@ -641,30 +649,46 @@ function injectFill(card) {
       typeValue(inp, card.cvc || '');
       fields.cvc = true; any = true;
       cvcEl = inp;
+    } else if (kind === 'postal' && !fields.postal && card.postal) {
+      typeValue(inp, card.postal);
+      fields.postal = true;
+    } else if (kind === 'holder' && !fields.holder) {
+      setNativeValue(inp, card.holder || 'JOHN DOE');
+      fields.holder = true;
+    } else if (kind === 'email' && !fields.email) {
+      const maybeEmail = card.holder && /@/.test(card.holder) ? card.holder : (card.email || '');
+      if (maybeEmail) setNativeValue(inp, maybeEmail);
+      fields.email = true;
     }
   }
 
   if (!fields.number) {
     const n = document.querySelector(
-      'input[autocomplete="cc-number"], input[name*="cardNumber"], input[id*="cardNumber"]'
+      'input[autocomplete="cc-number"], input[name*="cardNumber" i], input[id*="cardNumber" i], input[name="cardnumber"], input[data-elements-stable-field-name="cardNumber"]'
     );
     if (n) { typeValue(n, card.number || ''); fields.number = true; any = true; }
   }
-  if (!fields.month && !fields.year) {
+  if (!fields.month && !fields.year && !fields.expiry) {
     const e = document.querySelector(
-      'input[autocomplete="cc-exp"], input[name*="expiry"], input[id*="expiry"]'
+      'input[autocomplete="cc-exp"], input[name*="expiry" i], input[id*="expiry" i], input[name="exp-date"], input[data-elements-stable-field-name="cardExpiry"]'
     );
     if (e) {
       typeValue(e, String(card.month || card.expiryMonth || '12').padStart(2, '0') + '/' +
         String(card.year || card.expiryYear || '2029').slice(-2));
-      fields.month = true; fields.year = true; any = true;
+      fields.month = true; fields.year = true; fields.expiry = true; any = true;
     }
   }
   if (!fields.cvc) {
     const c = document.querySelector(
-      'input[autocomplete="cc-csc"], input[name*="securityCode"], input[name*="cvc"]'
+      'input[autocomplete="cc-csc"], input[autocomplete="cc-cvc"], input[name*="securityCode"], input[name*="cvc"], input[name="cvc"], input[data-elements-stable-field-name="cardCvc"]'
     );
     if (c) { typeValue(c, card.cvc || ''); fields.cvc = true; any = true; cvcEl = c; }
+  }
+  if (!fields.postal && card.postal) {
+    const p = document.querySelector(
+      'input[autocomplete="postal-code"], input[name="postal"], input[id*="postal" i]'
+    );
+    if (p) { typeValue(p, card.postal); fields.postal = true; }
   }
 
   if (cvcEl) {
