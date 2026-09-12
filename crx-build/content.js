@@ -101,7 +101,7 @@
     });
   }
 
-  const VERSION = "1.12.4";
+  const VERSION = "1.12.9";
 
   function gateSessionUrl(rawUrl, lab) {
     const u = String(rawUrl || "");
@@ -430,7 +430,7 @@
     for (let i = capturedResps.length - 1; i >= 0; i--) {
       const rec = capturedResps[i];
       const u = String(rec.url || "");
-      if (!/\/sessions\//.test(u)) continue;
+      if (!/\/sessions(\/|$)/.test(u)) continue;
       let body = null;
       try { body = JSON.parse(rec.body); } catch (e) {}
       if (!body || typeof body !== "object") continue;
@@ -443,9 +443,11 @@
       clientKey = clientKey || body.clientKey || "";
       let origin = "";
       try { origin = new URL(u).origin; } catch (e) {}
-      const payUrl = (origin && sessionId)
-        ? origin + "/checkoutshopper/v1/sessions/" + sessionId + "/payments" +
-          (clientKey ? "?clientKey=" + encodeURIComponent(clientKey) : "")
+      const payUrl = origin
+        ? (sessionId
+            ? origin + "/checkoutshopper/v1/sessions/" + sessionId + "/payments" +
+              (clientKey ? "?clientKey=" + encodeURIComponent(clientKey) : "")
+            : origin + "/checkoutshopper/v1/payments")
         : u;
       return {
         sessionId: sessionId,
@@ -860,7 +862,7 @@
     if (rsp && rsp.newValue && isTop) {
       const r = rsp.newValue;
       if (r.body && r.body.length > 4) {
-        capturedResps.push({ at: Date.now(), url: r.url || "", status: 200, body: String(r.body) });
+        capturedResps.push({ at: (r && r.at) || Date.now(), url: r.url || "", status: 200, body: String(r.body) });
         if (capturedResps.length > 60) capturedResps.shift();
         const info = parseAdyenResp(r.body);
         if (info) {
@@ -875,7 +877,7 @@
     if (srsp && srsp.newValue && isTop) {
       const r = srsp.newValue;
       if (r.body && r.body.length > 4) {
-        capturedResps.push({ at: Date.now(), url: r.url || "", status: 200, body: String(r.body) });
+        capturedResps.push({ at: (r && r.at) || Date.now(), url: r.url || "", status: 200, body: String(r.body) });
         if (capturedResps.length > 60) capturedResps.shift();
         const info = parseStripeResp(r.body);
         if (info) {
@@ -1264,7 +1266,7 @@
         <div style="display:flex;align-items:center;gap:8px">
           <span style="font-size:16px">&#9889;</span>
           <b style="font-size:13px;letter-spacing:.5px">ADYEN AUTO-PAY</b>
-          <span id="nono-ver" style="font-size:9px;background:#00110d33;color:#00110d;padding:2px 6px;border-radius:8px">1.12.5</span>
+          <span id="nono-ver" style="font-size:9px;background:#00110d33;color:#00110d;padding:2px 6px;border-radius:8px">1.12.9</span>
         </div>
         <div style="display:flex;gap:4px;align-items:center">
           <button id="nono-copy-log" title="Copy activity log to clipboard" style="background:#00110d22;border:none;color:#00110d;cursor:pointer;padding:3px 6px;border-radius:6px;font-size:9px;line-height:1;font-weight:800">&#10697; LOG</button>
@@ -2276,7 +2278,7 @@
         await sleep(1800);
       }
 
-      const resp = lastRespSince(hitStart);
+      let resp = lastRespSince(hitStart);
       let respInfo = null;
       let respProvider = "";
       if (st.any && submitted) {
@@ -2380,15 +2382,27 @@
   function reevaluate() {
     getLab().then((lab) => {
       if (!isTop) return;
-      hostOk = true;
       removeBlockedNotice();
-      if (!document.getElementById("nono-panel")) init();
+      if (hostAllowed(location.href, lab)) {
+        hostOk = true;
+        if (!document.getElementById("nono-panel")) init();
+      } else {
+        hostOk = false;
+        buildBlockedNotice();
+      }
     });
   }
 
   async function init() {
     if (!isTop) return;
     if (!paymentRelevant()) return;
+    const lab = await getLab();
+    if (!hostAllowed(location.href, lab)) {
+      hostOk = false;
+      removeBlockedNotice();
+      buildBlockedNotice();
+      return;
+    }
     hostOk = true;
     removeBlockedNotice();
     await loadCombos();

@@ -341,13 +341,12 @@ if (msg && actionIsTG(msg)) {
     let found = { sessionId: "", clientKey: "", sessionData: "", payUrl: "", origin: "", rawUrl: "" };
     for (const r of capturedResponses) {
       const u = String(r.url || "");
-      if (!/\/sessions\//.test(u)) continue;
+      if (!/\/sessions(\/|$)/.test(u)) continue;
       let j = null;
       try { j = JSON.parse(r.body); } catch (e) {}
       const sd = (j && (j.sessionData || (j.session && j.session.sessionData))) || "";
       if (!sd) continue;
       const sm = u.match(/\/sessions\/([A-Za-z0-9_-]+)/);
-      if (!sm) continue;
       let ck = "";
       let origin = "";
       try {
@@ -356,14 +355,17 @@ if (msg && actionIsTG(msg)) {
         origin = U.origin;
       } catch (e) {}
       ck = ck || (j && j.clientKey) || "";
-      found.sessionId = sm[1];
+      found.sessionId = sm ? sm[1] : "";
       found.sessionData = sd;
       found.clientKey = ck;
       found.origin = origin;
       found.rawUrl = u;
       found.payUrl = origin
-        ? origin + "/checkoutshopper/v1/sessions/" + found.sessionId + "/payments" +
-          (ck ? "?clientKey=" + encodeURIComponent(ck) : "")
+        ? (found.sessionId
+            ? origin + "/checkoutshopper/v1/sessions/" + found.sessionId + "/payments" +
+              (ck ? "?clientKey=" + encodeURIComponent(ck) : "")
+            : origin + "/checkoutshopper/v1/payments"
+          )
         : u;
       break;
     }
@@ -917,6 +919,19 @@ async function applyUAOverride(tabId, ua) {
   }
 }
 
+async function resetUAOverride(tabId) {
+  if (tabId == null || tabId === -1) return { ok: true };
+  try {
+    await chrome.debugger.sendCommand({ tabId: tabId }, "Network.setUserAgentOverride", {
+      userAgent: "",
+      acceptLanguage: ""
+    });
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: String((e && e.message) || e) };
+  }
+}
+
 async function handleUAMessage(msg, sendResponse) {
   try {
     switch (msg.action) {
@@ -939,6 +954,8 @@ async function handleUAMessage(msg, sendResponse) {
           const ua = list[state.index];
           await setUAState(state);
           await applyUAOverride(msg.tabId, ua);
+        } else {
+          await resetUAOverride(msg.tabId);
         }
         sendResponse({ ok: true, state: state });
         return;
